@@ -6,7 +6,7 @@ cd "$APP_DIR"
 echo "[$(date)] === بدء النشر ==="
 
 # سحب آخر تحديث
-GIT_SSH_COMMAND="ssh -i /home/deploy/.ssh/github_deploy -o StrictHostKeyChecking=no" \
+GIT_SSH_COMMAND="ssh -i /home/deploy/.ssh/saraq_user_deploykey -o StrictHostKeyChecking=no" \
   git pull origin main
 
 # تثبيت كل الحزم (devDependencies ضرورية للبناء وتشغيل tsx)
