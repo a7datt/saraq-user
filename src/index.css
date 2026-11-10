@@ -186,15 +186,18 @@ body { font-weight: 500; }
 /* ============================================================
    DARK MODE — FULL COVERAGE OVERRIDES
    ============================================================ */
-.dark .bg-white   { @apply bg-black; }
-.dark .bg-gray-50  { @apply bg-zinc-950; }
-.dark .bg-gray-100 { @apply bg-zinc-800; }
-.dark .bg-gray-200 { @apply bg-zinc-700; }
-.dark .bg-gray-300 { @apply bg-zinc-600; }
-.dark .bg-slate-50  { @apply bg-zinc-900; }
-.dark .bg-slate-100 { @apply bg-zinc-800; }
-.dark .bg-neutral-50  { @apply bg-zinc-900; }
-.dark .bg-neutral-100 { @apply bg-zinc-800; }
+/* خلفية الصفحة نفسها: أسود خالص دائماً في الوضع الداكن (bg-white/gray-50/slate-50/neutral-50
+   هي خلفيات الصفحة/الأقسام في التصميم الأصلي). الرمادي (zinc-700/800) يبقى محصوراً بالعناصر
+   المرتفعة فوق الخلفية (بطاقات، حقول، فواصل) ليُميَّزها بصرياً عن الأسود الخالص خلفها. */
+.dark .bg-white    { @apply bg-black; }
+.dark .bg-gray-50   { @apply bg-black; }
+.dark .bg-slate-50   { @apply bg-black; }
+.dark .bg-neutral-50  { @apply bg-black; }
+.dark .bg-gray-100  { @apply bg-zinc-900; }
+.dark .bg-gray-200  { @apply bg-zinc-800; }
+.dark .bg-gray-300  { @apply bg-zinc-700; }
+.dark .bg-slate-100  { @apply bg-zinc-900; }
+.dark .bg-neutral-100 { @apply bg-zinc-900; }
 
 .dark .text-black    { @apply text-white; }
 .dark .text-gray-900 { @apply text-white; }
