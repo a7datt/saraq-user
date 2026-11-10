@@ -68,6 +68,30 @@ export interface InventoryUnit {
   created_at?: string;
 }
 
+export interface Rank {
+  id: number;
+  name: string;
+  image_url: string;
+  color: string;
+  required_amount: number | string;
+  has_discount: boolean;
+  discount_percent: number | string;
+  description: string;
+  benefits: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface MyRankInfo {
+  ranks: Rank[];
+  current: Rank | null;
+  next: Rank | null;
+  total_recharge_sum: number;
+  remaining: number;
+  progress_percent: number;
+  is_manual: boolean;
+}
+
 export interface UserData {
   id: number;
   name: string;
@@ -78,6 +102,8 @@ export interface UserData {
   avatar_url?: string;
   phone?: string;
   telegram_chat_id?: number | null;
+  rank_id?: number | null;
+  manual_rank_id?: number | null;
   is_vip: boolean;
   is_banned: boolean;
   is_blocked?: boolean;

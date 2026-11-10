@@ -1854,6 +1854,55 @@ async function startServer() {
     }
   });
 
+  // =================== RANKS (نظام الرتب) ===================
+  const RANK_PUBLIC_COLS = "id, name, image_url, color, required_amount, has_discount, discount_percent, description, benefits, is_active, sort_order";
+
+  app.get("/api/ranks", async (_req, res) => {
+    try {
+      const { data, error } = await supabase.from("ranks").select(RANK_PUBLIC_COLS).eq("is_active", true).order("sort_order", { ascending: true });
+      if (error) throw error;
+      res.json(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      safeError(res, e, "فشل تحميل الرتب");
+    }
+  });
+
+  app.get("/api/ranks/me", authenticate, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const [{ data: ranks, error: rErr }, { data: userRow }, { data: stats }] = await Promise.all([
+        supabase.from("ranks").select(RANK_PUBLIC_COLS).eq("is_active", true).order("sort_order", { ascending: true }),
+        supabase.from("users").select("id, rank_id, manual_rank_id").eq("id", userId).single(),
+        supabase.from("user_stats").select("total_recharge_sum").eq("user_id", userId).maybeSingle(),
+      ]);
+      if (rErr) throw rErr;
+      const list = Array.isArray(ranks) ? ranks : [];
+      const total = parseFloat(String(stats?.total_recharge_sum ?? 0)) || 0;
+      let current = list.find((r: any) => String(r.id) === String(userRow?.rank_id)) || null;
+      if (!current) {
+        // لم تُحسب الرتبة بعد (مستخدم قديم) — نحسبها فوراً في قاعدة البيانات
+        const { data: recalced } = await supabase.rpc("recalc_user_rank", { p_user_id: userId });
+        current = list.find((r: any) => String(r.id) === String(recalced)) || list[0] || null;
+      }
+      const currentOrder = current ? Number(current.sort_order) : -1;
+      const next = list.find((r: any) => Number(r.sort_order) > currentOrder && parseFloat(String(r.required_amount)) > total) || null;
+      const base = current ? parseFloat(String(current.required_amount)) || 0 : 0;
+      const target = next ? parseFloat(String(next.required_amount)) || 0 : base;
+      const progress = next && target > base ? Math.min(100, Math.max(0, ((total - base) / (target - base)) * 100)) : 100;
+      res.json({
+        ranks: list,
+        current,
+        next,
+        total_recharge_sum: total,
+        remaining: next ? Math.max(0, target - total) : 0,
+        progress_percent: Math.round(progress),
+        is_manual: !!userRow?.manual_rank_id && String(userRow.manual_rank_id) === String(current?.id),
+      });
+    } catch (e: any) {
+      safeError(res, e, "فشل تحميل رتبتك");
+    }
+  });
+
   // GET /api/search?q=... — بحث شامل بالمتجر (منتجات + أقسام بكل مستوياتها)، كان مفقوداً كلياً
   app.get("/api/search", async (req, res) => {
     try {
@@ -3597,6 +3646,32 @@ async function startServer() {
     | { ok: true; body: Record<string, any> }
     | { ok: false; statusCode: number; error: string; details?: any };
 
+  // --- نظام الرتب: نسبة خصم رتبة المستخدم (0 إن لم تكن للرتبة خصم) ---
+  async function getRankDiscountPercent(rankId: any): Promise<number> {
+    if (rankId === null || rankId === undefined) return 0;
+    try {
+      const { data } = await supabase.from("ranks").select("has_discount, discount_percent, is_active").eq("id", rankId).maybeSingle();
+      if (!data || !data.is_active || !data.has_discount) return 0;
+      const pct = parseFloat(String(data.discount_percent)) || 0;
+      return pct > 0 && pct < 100 ? pct : 0;
+    } catch { return 0; }
+  }
+
+  // --- صافي ربح الطلب (يُستخدم حصراً لحساب عمولة الإحالة) ---
+  // external_api: التكلفة = سعر المزوّد للوحدة (cost_price المحفوظ) × الكمية.
+  // غير ذلك: default_profit للمنتج (ربح الوحدة) × الكمية. بلا أي معلومة تكلفة/ربح → 0.
+  function computeOrderNetProfit(product: any, total: number, qty: number, costPerUnit: number): number {
+    const q = Math.max(1, Number(qty) || 1);
+    if (product?.store_type === "external_api" && costPerUnit > 0) {
+      return Math.max(0, total - costPerUnit * q);
+    }
+    const dp = product?.default_profit;
+    if (dp !== undefined && dp !== null && dp !== "" && !isNaN(parseFloat(String(dp)))) {
+      return Math.max(0, parseFloat(String(dp)) * q);
+    }
+    return 0;
+  }
+
   async function createOrderCore(
     userId: number | string,
     productId: number | string,
@@ -3692,6 +3767,10 @@ async function startServer() {
       const { data: vipDiscountSetting } = await supabase.from("settings").select("value").eq("key", "vip_discount").single();
       const vipDiscountRate = vipDiscountSetting ? parseFloat(vipDiscountSetting.value) || 5 : 5;
       let discountPercent = user.is_vip ? vipDiscountRate : 0;
+
+      // خصم رتبة المستخدم (نظام الرتب) — يُطبَّق على المشتريات ويُؤخذ الأعلى بين الخصومات
+      const rankDiscount = await getRankDiscountPercent((user as any).rank_id);
+      if (rankDiscount > 0) discountPercent = Math.max(discountPercent, rankDiscount);
 
       if (stats) {
         // خصم مدى الحياة (الهدف 6: 3%، الهدف 7: 5%)
@@ -3910,7 +3989,10 @@ async function startServer() {
 
       // حفظ الطلب في قاعدة البيانات المحلية
       // cost_price: سعر التكلفة لحظة الشراء — يُحفظ هنا ليُستخدم في حساب الأرباح حتى لو تغيّر لاحقاً
-      const snapshotCostPrice = parseFloat(String(product.price_per_unit || 0)) || 0;
+      // price_per_unit هو سعر تكلفة المزوّد فقط لمنتجات external_api؛ لباقي الأنواع (خصوصاً quantities) هو كمية لا مبلغ.
+      const snapshotCostPrice = product.store_type === 'external_api'
+        ? (parseFloat(String(product.price_per_unit || 0)) || 0)
+        : 0;
       // جلب provider_id من المنتج لحفظه في meta (يُستخدم لاحقاً في sync/check)
       const providerIdForMeta = (product as any).provider_id || null;
 
@@ -3976,12 +4058,20 @@ async function startServer() {
       // مضاعفاً غير صحيح بالاعتماد على قيمة user.balance القديمة.
       logActivity(userId, "order", `طلب شراء: ${product.name} بقيمة ${total}`, req);
 
-      // عمولة الإحالة (ديناميكية من الإعدادات)
+      // عمولة الإحالة = نسبة من صافي ربح الطلب (وليس من مبلغ الشراء ولا من الشحن)
       if (user.referred_by_id) {
-        const { data: refCommSetting2 } = await supabase.from("settings").select("value").eq("key", "referral_commission").single();
-        const refCommRate2 = parseFloat(refCommSetting2?.value || "5") / 100;
-        const commission = total * refCommRate2;
-        await supabase.rpc("increment_balance", { user_id_param: user.referred_by_id, amount_param: commission });
+        try {
+          const { data: refCommSetting2 } = await supabase.from("settings").select("value").eq("key", "referral_commission").single();
+          const refCommRate2 = (parseFloat(refCommSetting2?.value || "5") || 5) / 100;
+          const netProfit = computeOrderNetProfit(product, total, safeQty, snapshotCostPrice);
+          const commission = Math.round(netProfit * refCommRate2 * 10000) / 10000;
+          if (commission > 0) {
+            await supabase.rpc("increment_balance", { user_id_param: user.referred_by_id, amount_param: commission });
+            await supabase.from("transactions").insert({ user_id: user.referred_by_id, amount: commission, note: `عمولة إحالة (${Math.round(refCommRate2 * 100)}% من صافي ربح الطلب #${order.id})`, status: "approved" });
+          }
+        } catch (refErr) {
+          console.error(`[REFERRAL] فشل حساب/إضافة عمولة الإحالة للطلب #${order.id}:`, refErr);
+        }
       }
 
       // إشعار فوري للمستخدم إذا تم قبول الطلب لحظياً
@@ -4806,6 +4896,7 @@ async function startServer() {
 
       const { error: incErr } = await supabase.rpc("increment_balance", { user_id_param: userId, amount_param: finalUsdAmount });
       if (incErr) throw incErr;
+      await supabase.rpc("add_recharge_sum", { p_user_id: userId, p_amount: finalUsdAmount }).then(({ error }) => { if (error) console.error("[RANKS] add_recharge_sum failed:", error.message); });
       const { data: freshUserRow } = await supabase.from("users").select("balance, name, telegram_chat_id").eq("id", userId).single();
       const newBalance = parseFloat((parseFloat(String(freshUserRow?.balance ?? 0)) || 0).toFixed(4));
       logActivity(userId, "recharge", `شحن رصيد تلقائي (فاتورة ${GATEWAY_LABEL_AR[gatewayCode]}) بقيمة ${finalUsdAmount}$`, req);
@@ -5115,6 +5206,10 @@ async function startServer() {
       console.error(`[WEBHOOK:sybclint] فشلت إضافة الرصيد بعد الاعتماد — code:${codeRow.code} userId:${codeRow.user_id}`, incErr);
       notifyAdminServer("system_alerts", `🚨 شحن تلقائي (${GATEWAY_LABEL_AR[gatewayCode]}) اعتُمد لكن فشلت إضافة الرصيد فعلياً للمستخدم #${codeRow.user_id}. رمز: ${codeRow.code}. يتطلب تدخل يدوي فوري.`, "topup", newTx?.id).catch(() => {});
       return;
+    }
+    {
+      const { error: rsErr } = await supabase.rpc("add_recharge_sum", { p_user_id: codeRow.user_id, p_amount: finalUsdAmount });
+      if (rsErr) console.error("[RANKS] add_recharge_sum failed:", rsErr.message);
     }
 
     const { data: freshUserRow } = await supabase.from("users").select("balance, name, telegram_chat_id").eq("id", codeRow.user_id).single();
@@ -5464,6 +5559,10 @@ async function startServer() {
       // حالة الاعتماد (نعيدها إلى "pending" ليُعاد التحقق منها لاحقاً يدوياً) ونُبلغ المستخدم
       // بوضوح أن العملية لم تكتمل بعد بدل إخفاء الفشل عنه.
       const { error: incBalErr } = await supabase.rpc("increment_balance", { user_id_param: userId, amount_param: finalUsdAmount });
+      if (!incBalErr) {
+        const { error: rsErr } = await supabase.rpc("add_recharge_sum", { p_user_id: userId, p_amount: finalUsdAmount });
+        if (rsErr) console.error("[RANKS] add_recharge_sum failed:", rsErr.message);
+      }
       if (incBalErr) {
         console.error(`[verify-auto] فشلت زيادة الرصيد بعد اعتماد tx id=${tx.id} تلقائياً — سيُعاد وضعها كمعلّقة للمراجعة اليدوية:`, incBalErr);
         try {

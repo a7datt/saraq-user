@@ -70,6 +70,7 @@ import {
   Gift,
   Headphones,
   Link2,
+  Award,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -133,6 +134,9 @@ import SessionsActivityPage from "./pages/SessionsActivityPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
 import EditProfilePage from "./pages/EditProfilePage";
 import ReferralPage from "./pages/ReferralPage";
+import RanksPage from "./pages/RanksPage";
+import AnimatedLogo from "./components/AnimatedLogo";
+import type { MyRankInfo } from "./types";
 import ChatPage from "./pages/ChatPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -560,15 +564,38 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [siteSettings, setSiteSettings] = useState<any[]>([]);
+  // نظام الرتب: رتبة المستخدم الحالية + التقدم نحو الرتبة التالية
+  const [rankInfo, setRankInfo] = useState<MyRankInfo | null>(null);
+  const refreshRank = useCallback(async () => {
+    const token = localStorage.getItem("authToken") || "";
+    if (!token) { setRankInfo(null); return; }
+    try {
+      const res = await fetch("/api/ranks/me", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.ranks)) setRankInfo(data);
+    } catch { /* صامت — الشارة اختيارية */ }
+  }, []);
   const [entryPopup, setEntryPopup] = useState<{ show: boolean; text: string; link?: string }>({ show: false, text: "" });
+  // تحديث شارة الرتبة كلما تغيّر المستخدم أو رصيده (بعد شحن) أو رتبته (منح من الإدارة)
+  useEffect(() => {
+    if (user?.id) refreshRank();
+  }, [user?.id, user?.balance, user?.rank_id, refreshRank]);
   const [maintenanceIpAllowed, setMaintenanceIpAllowed] = useState(false);
   // Dark mode is controlled by the user's own choice in the UI, saved locally
   // so it persists across refreshes regardless of the admin's default setting.
   const [isDarkMode, setIsDarkMode] = useState(() => {
+    // الهوية الجديدة للمتجر داكنة (أسود/أحمر): نطبّقها مرة واحدة على الجميع، ثم يبقى اختيار
+    // المستخدم من الإعدادات محفوظاً كما هو.
+    if (!localStorage.getItem("theme_v2_dark_applied")) {
+      localStorage.setItem("theme_v2_dark_applied", "1");
+      localStorage.setItem("theme", "dark");
+      return true;
+    }
     const saved = localStorage.getItem("theme");
     if (saved === "dark") return true;
     if (saved === "light") return false;
-    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return true;
   });
   // -- Currency state (dynamic multi-currency system) --
   const [availableCurrencies, setAvailableCurrencies] = useState<CurrencyOption[]>([]);
@@ -798,6 +825,8 @@ export default function App() {
       url = "/profile/edit";
     } else if (view.type === "referral") {
       url = "/profile/referral";
+    } else if (view.type === "ranks") {
+      url = "/profile/ranks";
     } else if (view.type === "active_sessions") {
       url = "/profile/active-sessions";
     } else if (view.type === "activity_log") {
@@ -868,6 +897,8 @@ export default function App() {
         setActiveTab("profile"); setView({ type: "edit_profile" });
       } else if (path === "/profile/referral") {
         setActiveTab("profile"); setView({ type: "referral" });
+      } else if (path === "/profile/ranks") {
+        setActiveTab("profile"); setView({ type: "ranks" });
       } else if (path === "/profile/active-sessions") {
         setActiveTab("profile"); setView({ type: "active_sessions" });
       } else if (path === "/settings/activity-log") {
@@ -2159,6 +2190,7 @@ export default function App() {
 
   const handleLogout = () => {
     setUser(null);
+    setRankInfo(null);
     localStorage.removeItem("authToken");
     localStorage.removeItem("userId");
     setIsDrawerOpen(false);
@@ -2242,31 +2274,53 @@ export default function App() {
 
   // --- UI Components ---
 
+  const openRanksPage = () => { setActiveTab("profile"); setView({ type: "ranks" }); setNotificationsOpen(false); setIsDrawerOpen(false); };
+  const unreadNotifCount = (Array.isArray(notifications) ? notifications : []).filter(n => !n.is_read).length;
+
   const Header = () => (
-    <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-100 flex items-center justify-between px-4 z-40">
-      <div className="flex items-center gap-3">
-        <button onClick={() => setIsDrawerOpen(true)} className="p-2 hover:bg-gray-50 rounded-full">
+    <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-100 flex items-center justify-between px-3 z-40 sq-header">
+      {/* الجهة اليمنى (RTL: أول عنصر = أقصى اليمين): القائمة ← شارة الرتبة ← الإشعارات */}
+      <div className="flex items-center gap-1">
+        <button onClick={() => setIsDrawerOpen(true)} className="p-2 hover:bg-gray-50 rounded-full" aria-label="القائمة">
           <Menu size={24} className="text-gray-700" />
         </button>
+
+        {user && (
+          <button
+            onClick={openRanksPage}
+            className="flex flex-col items-center justify-center px-1.5 py-0.5 rounded-xl hover:bg-gray-50 active:scale-95 transition-transform min-w-[52px]"
+            aria-label="رتبتي"
+            title={rankInfo?.current?.name || "الرتب"}
+          >
+            <span className="w-8 h-8 flex items-center justify-center rank-badge-glow rounded-full" style={{ ["--rank-color" as any]: rankInfo?.current?.color || "var(--brand)" }}>
+              {rankInfo?.current?.image_url ? (
+                <OptimizedImage src={rankInfo.current.image_url} width={64} height={64} alt={rankInfo.current.name} className="w-full h-full object-contain" eager />
+              ) : (
+                <Award size={20} className="text-[var(--brand)]" />
+              )}
+            </span>
+            <span className="text-[9px] font-black leading-none mt-0.5 max-w-[64px] truncate" style={{ color: rankInfo?.current?.color || undefined }}>
+              {rankInfo?.current?.name || "الرتب"}
+            </span>
+          </button>
+        )}
+
+        <div className="relative inline-flex">
+          <button onClick={() => setNotificationsOpen(true)} className="p-2 hover:bg-gray-50 rounded-full" aria-label="الإشعارات">
+            <Bell size={22} className="text-gray-600" />
+          </button>
+          {unreadNotifCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--brand)] rounded-full border-2 border-white flex items-center justify-center pointer-events-none z-10">
+              <span className="text-white text-[9px] font-black leading-none px-0.5">
+                {unreadNotifCount > 9 ? "9+" : unreadNotifCount}
+              </span>
+            </span>
+          )}
+        </div>
       </div>
 
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-2">
-        <div className="w-10 h-10 flex items-center justify-center overflow-hidden">
-          <OptimizedImage
-            src={appearance.logo_url}
-            width={80}
-            height={80}
-            alt="Logo"
-            className="w-full h-full object-contain"
-            eager
-          />
-        </div>
-        <span className={`font-bold text-gray-800 hidden sm:block ${user?.is_vip ? 'text-amber-600' : ''}`}>
-          سراقب ستور {user?.is_vip && 'VIP'}
-        </span>
-      </div>
-      
-      <div className="flex items-center gap-4">
+      {/* الجهة المقابلة: الشعار المتحرك + الرصيد */}
+      <div className="flex items-center gap-3">
         {user && (
           <div className="relative flex items-center select-none">
             <span
@@ -2292,18 +2346,7 @@ export default function App() {
             )}
           </div>
         )}
-        <div className="relative inline-flex">
-          <button onClick={() => setNotificationsOpen(true)} className="p-2 hover:bg-gray-50 rounded-full">
-            <Bell size={22} className="text-gray-600" />
-          </button>
-          {(Array.isArray(notifications) ? notifications : []).filter(n => !n.is_read).length > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 rounded-full border-2 border-white flex items-center justify-center pointer-events-none z-10">
-              <span className="text-white text-[9px] font-bold leading-none px-0.5">
-                {(Array.isArray(notifications) ? notifications : []).filter(n => !n.is_read).length > 9 ? "9+" : (Array.isArray(notifications) ? notifications : []).filter(n => !n.is_read).length}
-              </span>
-            </span>
-          )}
-        </div>
+        <AnimatedLogo imageUrl={appearance.logo_url} size={40} onClick={() => { setActiveTab("home"); setView({ type: "main" }); }} />
       </div>
     </header>
   );
@@ -2848,6 +2891,7 @@ export default function App() {
                         الآن متتالية مباشرة بلا تقسيمات بصرية. */}
                     <DrawerItem large icon={<span className="text-yellow-500"><Trophy size={18} /></span>}   label="الترتيب" onClick={() => { setActiveTab("profile"); setView({ type: "leaderboard" }); setIsDrawerOpen(false); }} />
                     <DrawerItem large icon={<span className="text-yellow-500"><Gift size={18} /></span>}     label="الإحالة" onClick={() => { setActiveTab("profile"); setView({ type: "referral" }); setIsDrawerOpen(false); }} />
+                    <DrawerItem large icon={<span className="text-[var(--brand)]"><Award size={18} /></span>} label="الرتب" onClick={() => { setActiveTab("profile"); setView({ type: "ranks" }); setIsDrawerOpen(false); }} />
                     <DrawerItem large icon={<span className="text-green-600"><Key size={18} /></span>} label="API" onClick={() => { setActiveTab("profile"); setView({ type: "user_api" }); setIsDrawerOpen(false); }} />
                     <DrawerItem icon={<span className="text-green-500"><Headphones size={18} /></span>} label="الدعم الفني"  onClick={() => { setActiveTab("profile"); setView({ type: "chat" }); setIsDrawerOpen(false); }} />
 
@@ -3063,6 +3107,7 @@ export default function App() {
                     {view.type === "edit_profile" && <EditProfilePage user={user} theme={theme} setView={setView} fetchUser={fetchUser} />}
                     {view.type === "profile_forgot_password" && <ForgotPasswordPage setUser={setUser} setView={setView} setActiveTab={setActiveTab} initialEmail={user?.email || ""} lockEmail backView={{ type: "edit_profile" }} />}
                     {view.type === "referral" && <ReferralPage user={user} siteSettings={siteSettings} setView={setView} />}
+                    {view.type === "ranks" && <RanksPage user={user} setView={setView} setActiveTab={setActiveTab} rankInfo={rankInfo} refreshRank={refreshRank} />}
                     {view.type === "privacy_policy" && <PrivacyPolicyPage setView={setView} />}
                     {view.type === "faq" && <FaqPage setView={setView} />}
                     {view.type === "chat" && <ChatPage user={user} theme={theme} setView={setView} fetchUser={fetchUser} />}

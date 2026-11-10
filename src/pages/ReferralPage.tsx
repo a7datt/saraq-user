@@ -84,8 +84,8 @@ export default function ReferralPage({ user, siteSettings, setView }: ReferralPa
             className="w-24 h-24 object-contain aspect-square"
           />
         </div>
-        <h3 className="font-bold text-lg">اربح {commissionRate}% من كل عملية شراء</h3>
-        <p className="text-gray-500 text-sm">شارك رابط الإحالة الخاص بك مع أصدقائك واحصل على عمولة {commissionRate}% من كل عملية شراء يقومون بها، تضاف مباشرة إلى رصيدك.</p>
+        <h3 className="font-bold text-lg">اربح {commissionRate}% من صافي الربح</h3>
+        <p className="text-gray-500 text-sm">شارك رابط الإحالة الخاص بك مع أصدقائك واحصل على عمولة {commissionRate}% من صافي ربح المتجر على كل عملية شراء يقومون بها، تضاف مباشرة إلى رصيدك.</p>
         
         <div className="bg-brand-light p-4 rounded-lg">
           <p className="text-xs text-brand font-bold mb-1">عدد المستخدمين المسجلين عبر رابطك</p>

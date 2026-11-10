@@ -73,15 +73,92 @@
   }
 }
 
-/* تخفيف أوزان الخطوط ليكون Cairo أكثر نعومة — يُطبق بعد Tailwind */
+/* هوية عريضة: أوزان خط أثقل عبر كامل الموقع لقراءة واضحة على الخلفية السوداء */
 @layer utilities {
-  .font-black    { font-weight: 700 !important; }
-  .font-extrabold { font-weight: 700 !important; }
-  .font-bold     { font-weight: 600 !important; }
-  .font-semibold { font-weight: 500 !important; }
-  .font-medium   { font-weight: 400 !important; }
-  .font-normal   { font-weight: 400 !important; }
-  .font-light    { font-weight: 300 !important; }
+  .font-black    { font-weight: 900 !important; }
+  .font-extrabold { font-weight: 800 !important; }
+  .font-bold     { font-weight: 700 !important; }
+  .font-semibold { font-weight: 700 !important; }
+  .font-medium   { font-weight: 600 !important; }
+  .font-normal   { font-weight: 500 !important; }
+  .font-light    { font-weight: 400 !important; }
+}
+body { font-weight: 500; }
+
+/* ============================================================
+   نظام الرتب + الشعار المتحرك
+   ============================================================ */
+.rank-badge-glow {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--rank-color, var(--brand)) 70%, transparent));
+  animation: rank-glow 2.6s ease-in-out infinite;
+}
+.rank-badge-current {
+  background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--rank-color, var(--brand)) 35%, transparent), transparent 70%);
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--rank-color, var(--brand)) 65%, transparent));
+  animation: rank-glow 2.6s ease-in-out infinite;
+}
+@keyframes rank-glow {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
+.rank-progress-fill {
+  background: linear-gradient(90deg, var(--brand), color-mix(in srgb, var(--brand) 55%, #fff));
+  background-size: 200% 100%;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--brand) 70%, transparent);
+  animation: rank-progress-shimmer 2.2s linear infinite;
+}
+@keyframes rank-progress-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.sq-logo-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  border-top-color: var(--brand);
+  border-left-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  animation: sq-spin 2.8s linear infinite;
+}
+.sq-logo-ring--inner {
+  inset: 4px;
+  border-top-color: transparent;
+  border-right-color: var(--brand);
+  border-bottom-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  animation: sq-spin 1.9s linear infinite reverse;
+}
+.sq-logo-core {
+  position: absolute;
+  inset: 7px;
+  border-radius: 9999px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--brand) 85%, #fff), var(--brand) 60%, color-mix(in srgb, var(--brand) 60%, #000));
+  box-shadow: 0 0 16px color-mix(in srgb, var(--brand) 70%, transparent);
+  animation: sq-pulse 2.4s ease-in-out infinite;
+}
+.sq-logo-stroke {
+  stroke-dasharray: 160;
+  stroke-dashoffset: 160;
+  animation: sq-draw 3.2s ease-in-out infinite;
+}
+.sq-logo-text {
+  background: linear-gradient(90deg, var(--text-primary) 0%, var(--text-primary) 40%, var(--brand) 50%, var(--text-primary) 60%, var(--text-primary) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: sq-shine 4s ease-in-out infinite;
+}
+@keyframes sq-spin  { to { transform: rotate(360deg); } }
+@keyframes sq-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+@keyframes sq-draw  { 0% { stroke-dashoffset: 160; } 45%, 70% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: -160; } }
+@keyframes sq-shine { 0%, 20% { background-position: 100% 0; } 60%, 100% { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .sq-logo-ring, .sq-logo-ring--inner, .sq-logo-core, .sq-logo-stroke, .sq-logo-text, .rank-badge-glow, .rank-badge-current, .rank-progress-fill { animation: none !important; }
 }
 .splash-screen {
   position: fixed;
@@ -110,7 +187,7 @@
    DARK MODE — FULL COVERAGE OVERRIDES
    ============================================================ */
 .dark .bg-white   { @apply bg-black; }
-.dark .bg-gray-50  { @apply bg-zinc-900; }
+.dark .bg-gray-50  { @apply bg-zinc-950; }
 .dark .bg-gray-100 { @apply bg-zinc-800; }
 .dark .bg-gray-200 { @apply bg-zinc-700; }
 .dark .bg-gray-300 { @apply bg-zinc-600; }
