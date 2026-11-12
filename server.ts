@@ -153,6 +153,25 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// [FIX-PAGINATION] PostgREST يُطبّق حدّاً افتراضياً (1000 صف) على كل استعلام SELECT
+// بلا .range()/.limit() صريح، ويُسقِط أي صف بعده بصمت (بلا خطأ). مع متجر يملك آلاف
+// المنتجات بقسم واحد، أي استعلام "كل منتجات هذا القسم" بلا هذه الدالة كان يُخفي
+// بصمت كل منتج يقع بعد الصف الألف. تجلب هذه الدالة كل الصفوف بصفحات متتالية
+// (1000 لكل صفحة، وهو أقصى ما يسمح به PostgREST) حتى تنتهي النتائج فعلاً.
+const PRODUCTS_FETCH_PAGE_SIZE = 1000;
+async function fetchAllRowsPaged<T = any>(
+  buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PRODUCTS_FETCH_PAGE_SIZE) {
+    const { data: page, error } = await buildQuery(from, from + PRODUCTS_FETCH_PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(page || []));
+    if (!page || page.length < PRODUCTS_FETCH_PAGE_SIZE) break;
+  }
+  return rows;
+}
+
 // نسبة عمولة/بونص طريقة الدفع وبقية الدوال المالية البحتة انتقلت إلى paymentMath.ts
 // (لتمكين اختبارها آلياً بدون تشغيل السيرفر كاملاً) — استيراد أدناه.
 
@@ -1978,22 +1997,21 @@ async function startServer() {
       // فيزيائي غير مضمون يتغير بعد أي UPDATE (توفر/سعر عبر المزامنة التلقائية)،
       // فيظهر الترتيب صحيحاً أحياناً ويختلط تلقائياً لاحقاً ويُخرج المنتج الذي نفذ
       // من مكانه. الحل: ترتيب صريح وثابت دائماً بـ order_index ثم id كفاصل تعادل.
-      let { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .eq("subcategory_id", req.params.id)
-        .order("order_index", { ascending: true })
-        .order("id", { ascending: true });
-      if (error && (error as any).code === "42703") {
-        const fallback = await supabase
-          .from("products")
-          .select("*")
-          .eq("subcategory_id", req.params.id)
-          .order("id", { ascending: true });
-        data = fallback.data;
-        error = fallback.error;
+      // [FIX-PAGINATION] راجع fetchAllRowsPaged — بدونه، قسم فرعي بأكثر من 1000 منتج
+      // (حالة متاجر كبيرة فعلياً) يفقد كل منتج بعد الصف الألف بصمت أمام العميل.
+      let data: any[];
+      try {
+        data = await fetchAllRowsPaged((from, to) =>
+          supabase.from("products").select("*").eq("subcategory_id", req.params.id)
+            .order("order_index", { ascending: true }).order("id", { ascending: true }).range(from, to)
+        );
+      } catch (error: any) {
+        if (error?.code !== "42703") throw error;
+        data = await fetchAllRowsPaged((from, to) =>
+          supabase.from("products").select("*").eq("subcategory_id", req.params.id)
+            .order("id", { ascending: true }).range(from, to)
+        );
       }
-      if (error) throw error;
       res.json(Array.isArray(data) ? data : []);
     } catch (e: any) {
       safeError(res, e, "فشل تحميل منتجات هذا التصنيف الفرعي");
@@ -2003,22 +2021,21 @@ async function startServer() {
   // منتجات مرتبطة مباشرة بقسم رئيسي (بدون قسم فرعي) — نفس نظام الترتيب والأعمدة
   app.get("/api/categories/:id/products", async (req, res) => {
     try {
-      let { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .eq("category_id", req.params.id)
-        .order("order_index", { ascending: true })
-        .order("id", { ascending: true });
-      if (error && (error as any).code === "42703") {
-        const fallback = await supabase
-          .from("products")
-          .select("*")
-          .eq("category_id", req.params.id)
-          .order("id", { ascending: true });
-        data = fallback.data;
-        error = fallback.error;
+      // [FIX-PAGINATION] راجع fetchAllRowsPaged — قسم رئيسي بأكثر من 1000 منتج مرتبط
+      // به مباشرة كان يفقد كل منتج بعد الصف الألف بصمت أمام العميل.
+      let data: any[];
+      try {
+        data = await fetchAllRowsPaged((from, to) =>
+          supabase.from("products").select("*").eq("category_id", req.params.id)
+            .order("order_index", { ascending: true }).order("id", { ascending: true }).range(from, to)
+        );
+      } catch (error: any) {
+        if (error?.code !== "42703") throw error;
+        data = await fetchAllRowsPaged((from, to) =>
+          supabase.from("products").select("*").eq("category_id", req.params.id)
+            .order("id", { ascending: true }).range(from, to)
+        );
       }
-      if (error) throw error;
       res.json(Array.isArray(data) ? data : []);
     } catch (e: any) {
       safeError(res, e, "فشل تحميل منتجات هذا القسم الرئيسي");
@@ -2030,20 +2047,24 @@ async function startServer() {
     try {
       const { subId, all } = req.query as any;
       await syncInventoryProductsAvailability(subId ? { subcategory_id: subId } : {});
-      let query = supabase.from("products").select("*, subcategories(name, categories(name))");
-      if (subId) query = query.eq("subcategory_id", subId);
-      else if (!all) query = query.eq("available", true);
       // [FIX] إضافة order_index كترتيب أساسي قبل id كي يلتزم بالترتيب الذي يضبطه الأدمن
-      let { data, error } = await query.order("order_index", { ascending: true }).order("id", { ascending: false });
-      if (error && (error as any).code === "42703") {
-        let fq = supabase.from("products").select("*, subcategories(name, categories(name))");
-        if (subId) fq = fq.eq("subcategory_id", subId);
-        else if (!all) fq = fq.eq("available", true);
-        const fallback = await fq.order("id", { ascending: false });
-        data = fallback.data;
-        error = fallback.error;
+      // [FIX-PAGINATION] راجع fetchAllRowsPaged — بلا هذا الجلب المُصفّح، أي فلتر يرجع
+      // أكثر من 1000 منتج كان يفقد الباقي بصمت (حدّ PostgREST الافتراضي).
+      const buildBase = () => {
+        let q = supabase.from("products").select("*, subcategories(name, categories(name))");
+        if (subId) q = q.eq("subcategory_id", subId);
+        else if (!all) q = q.eq("available", true);
+        return q;
+      };
+      let data: any[];
+      try {
+        data = await fetchAllRowsPaged((from, to) =>
+          buildBase().order("order_index", { ascending: true }).order("id", { ascending: false }).range(from, to)
+        );
+      } catch (error: any) {
+        if (error?.code !== "42703") throw error;
+        data = await fetchAllRowsPaged((from, to) => buildBase().order("id", { ascending: false }).range(from, to));
       }
-      if (error) throw error;
       const list = Array.isArray(data) ? data : [];
       // دفاع إضافي: حتى لو استخدم أي مكوّن آخر في الواجهة `name_verification_enabled` من هذه
       // القائمة مباشرة (بدل الفحص الحي عبر /api/name-verification/status)، نُطابقه هنا أيضاً
