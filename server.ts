@@ -3667,14 +3667,27 @@ async function startServer() {
     | { ok: true; body: Record<string, any> }
     | { ok: false; statusCode: number; error: string; details?: any };
 
-  // --- نظام الرتب: نسبة خصم رتبة المستخدم (0 إن لم تكن للرتبة خصم) ---
-  async function getRankDiscountPercent(rankId: any): Promise<number> {
+  // --- نظام الرتب: نسبة خصم رتبة المستخدم (0 إن لم تكن للرتبة خصم أو لم يكن المنتج ضمن
+  //     الأقسام/الأقسام الفرعية التي حددها الأدمن لهذه الرتبة في rank_categories) ---
+  async function getRankDiscountPercent(rankId: any, product: any): Promise<number> {
     if (rankId === null || rankId === undefined) return 0;
     try {
       const { data } = await supabase.from("ranks").select("has_discount, discount_percent, is_active").eq("id", rankId).maybeSingle();
       if (!data || !data.is_active || !data.has_discount) return 0;
       const pct = parseFloat(String(data.discount_percent)) || 0;
-      return pct > 0 && pct < 100 ? pct : 0;
+      if (!(pct > 0 && pct < 100)) return 0;
+
+      // لا يوجد أي قسم محدد لهذه الرتبة ⇒ لا تُطبَّق على أي منتج
+      const { data: scopes } = await supabase.from("rank_categories").select("category_type, category_id").eq("rank_id", rankId);
+      if (!scopes || scopes.length === 0) return 0;
+
+      const subcategoryId = product?.subcategory_id;
+      const parentCategoryId = (product as any)?.subcategories?.category_id;
+      const matched = scopes.some((s: any) =>
+        (s.category_type === "subcategory" && subcategoryId != null && String(s.category_id) === String(subcategoryId)) ||
+        (s.category_type === "category" && parentCategoryId != null && String(s.category_id) === String(parentCategoryId))
+      );
+      return matched ? pct : 0;
     } catch { return 0; }
   }
 
@@ -3710,7 +3723,7 @@ async function startServer() {
 
       const { data: user, error: uErr } = await supabase.from("users").select("*").eq("id", userId).single();
       if (uErr) throw uErr;
-      const { data: product, error: pErr } = await supabase.from("products").select("*").eq("id", productId).single();
+      const { data: product, error: pErr } = await supabase.from("products").select("*, subcategories(category_id)").eq("id", productId).single();
       if (pErr) throw pErr;
       if (!product) return { ok: false, statusCode: 404, error: "غير موجود" };
 
@@ -3790,7 +3803,7 @@ async function startServer() {
       let discountPercent = user.is_vip ? vipDiscountRate : 0;
 
       // خصم رتبة المستخدم (نظام الرتب) — يُطبَّق على المشتريات ويُؤخذ الأعلى بين الخصومات
-      const rankDiscount = await getRankDiscountPercent((user as any).rank_id);
+      const rankDiscount = await getRankDiscountPercent((user as any).rank_id, product);
       if (rankDiscount > 0) discountPercent = Math.max(discountPercent, rankDiscount);
 
       if (stats) {
