@@ -1927,7 +1927,7 @@ async function startServer() {
       if (ids.length === 0) return res.json({});
       const { data: user } = await supabase.from("users").select("id, is_vip, rank_id").eq("id", userId).maybeSingle();
       if (!user) return res.json({});
-      const { data: stats } = await supabase.from("user_stats").select("lifetime_discount, active_discount, discount_expires_at").eq("user_id", userId).maybeSingle();
+      const { data: stats } = await supabase.from("user_stats").select("*").eq("user_id", userId).maybeSingle();
       const { data: products } = await supabase.from("products")
         .select("id, price, price_per_unit, store_type, default_profit, subcategory_id, sub_sub_category_id, category_id, subcategories(category_id)").in("id", ids);
       const vipRules = user.is_vip ? await loadDiscountRules(supabase, "vip", null) : [];
