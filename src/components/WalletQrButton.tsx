@@ -11,6 +11,9 @@ interface WalletQrButtonProps {
   methodName?: string;
   /** [INVOICE-RESTYLE] قفل الأدمن: يظهر الـ QR مباشرة بلا حاجة لضغط الزر، مع أيقونة قفل صغيرة */
   alwaysOpen?: boolean;
+  /** [PHASE-1] مصدر الرمز: auto = توليد من العنوان، image = صورة QR مرفوعة من الأدمن */
+  qrMode?: "auto" | "image" | null;
+  qrImageUrl?: string | null;
 }
 
 /**
@@ -18,24 +21,26 @@ interface WalletQrButtonProps {
  * يُولَّد الـ QR محلياً داخل المتصفح (لا يُرسل العنوان لأي خدمة خارجية).
  * إن قفله الأدمن "مفتوحاً دائماً" (alwaysOpen) يُعرض الرمز مباشرة بلا أي ضغط.
  */
-const WalletQrButton: React.FC<WalletQrButtonProps> = ({ address, enabled, methodName, alwaysOpen }) => {
+const WalletQrButton: React.FC<WalletQrButtonProps> = ({ address, enabled, methodName, alwaysOpen, qrMode, qrImageUrl }) => {
   const [open, setOpen] = React.useState(false);
   const [dataUrl, setDataUrl] = React.useState<string>("");
   const [failed, setFailed] = React.useState(false);
   const value = (address || "").trim();
   const locked = !!alwaysOpen;
+  // [PHASE-1] وضع الصورة الجاهزة: يُعرض الرابط المرفوع كما هو. وإن لم يوجد رابط يُرجَع للتوليد التلقائي.
+  const uploadedImage = qrMode === "image" && (qrImageUrl || "").trim() ? (qrImageUrl || "").trim() : "";
 
   // [INVOICE-RESTYLE] مولَّد دائماً (لا يعتمد على فتح نافذة) حين يكون مقفلاً مفتوحاً، كي يظهر
   // الرمز فور تحميل الصفحة دون أي تفاعل من المستخدم.
   React.useEffect(() => {
-    if ((!open && !locked) || !value) return;
+    if ((!open && !locked) || !value || uploadedImage) return;
     let cancelled = false;
     setFailed(false);
     QRCode.toDataURL(value, { width: 512, margin: 2, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#ffffff" } })
       .then(url => { if (!cancelled) setDataUrl(url); })
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [open, locked, value]);
+  }, [open, locked, value, uploadedImage]);
 
   // إغلاق بمفتاح Escape
   React.useEffect(() => {
@@ -55,6 +60,8 @@ const WalletQrButton: React.FC<WalletQrButtonProps> = ({ address, enabled, metho
         <div className="relative bg-white p-2 rounded-xl border border-gray-100 flex items-center justify-center min-h-[160px] w-[160px]">
           {failed ? (
             <p className="text-xs text-red-500">تعذّر إنشاء الـ QR</p>
+          ) : uploadedImage ? (
+            <img src={uploadedImage} alt="QR" className="w-full h-auto" onError={() => setFailed(true)} />
           ) : dataUrl ? (
             <img src={dataUrl} alt="QR عنوان المحفظة" className="w-full h-auto" style={{ imageRendering: "pixelated" }} />
           ) : (
@@ -99,6 +106,8 @@ const WalletQrButton: React.FC<WalletQrButtonProps> = ({ address, enabled, metho
             <div className="bg-white p-2 rounded-xl border border-gray-100 flex items-center justify-center min-h-[240px]">
               {failed ? (
                 <p className="text-xs text-red-500">تعذّر إنشاء الـ QR</p>
+              ) : uploadedImage ? (
+                <img src={uploadedImage} alt="QR" className="w-full h-auto" onError={() => setFailed(true)} />
               ) : dataUrl ? (
                 <img src={dataUrl} alt="QR عنوان المحفظة" className="w-full h-auto" style={{ imageRendering: "pixelated" }} />
               ) : (

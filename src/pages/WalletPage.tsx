@@ -100,12 +100,14 @@ const WalletChargeView: React.FC<WalletChargeViewProps> = React.memo(({
   React.useEffect(() => {
     const addr = selectedMethod?.wallet_address;
     if (!invoice || !addr) { setInvoiceQrDataUrl(""); return; }
+    // [PHASE-1] صورة QR جاهزة مرفوعة من الأدمن تُعرض كما هي بدل التوليد من العنوان
+    if (selectedMethod?.qr_mode === "image" && (selectedMethod?.qr_image_url || "").trim()) { setInvoiceQrDataUrl((selectedMethod.qr_image_url as string).trim()); return; }
     let cancelled = false;
     QRCode.toDataURL(addr, { width: 320, margin: 1, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#ffffff" } })
       .then(url => { if (!cancelled) setInvoiceQrDataUrl(url); })
       .catch(() => { if (!cancelled) setInvoiceQrDataUrl(""); });
     return () => { cancelled = true; };
-  }, [invoice, selectedMethod?.wallet_address]);
+  }, [invoice, selectedMethod?.wallet_address, selectedMethod?.qr_mode, selectedMethod?.qr_image_url]);
 
   // ===== الشحن التلقائي (Webhook) — رمز مميز بدل مبلغ محدد مسبقاً (verification_mode === 'webhook') =====
   const [autoCode, setAutoCode] = React.useState<{ code: string; walletAddress: string; expiresAt: string; createdAt: string } | null>(null);
@@ -142,12 +144,14 @@ const WalletChargeView: React.FC<WalletChargeViewProps> = React.memo(({
   React.useEffect(() => {
     const addr = selectedMethod?.wallet_address;
     if (!autoCode || !addr) { setAutoCodeQrDataUrl(""); return; }
+    // [PHASE-1] صورة QR جاهزة مرفوعة من الأدمن تُعرض كما هي بدل التوليد من العنوان
+    if (selectedMethod?.qr_mode === "image" && (selectedMethod?.qr_image_url || "").trim()) { setAutoCodeQrDataUrl((selectedMethod.qr_image_url as string).trim()); return; }
     let cancelled = false;
     QRCode.toDataURL(addr, { width: 320, margin: 1, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#ffffff" } })
       .then(url => { if (!cancelled) setAutoCodeQrDataUrl(url); })
       .catch(() => { if (!cancelled) setAutoCodeQrDataUrl(""); });
     return () => { cancelled = true; };
-  }, [autoCode, selectedMethod?.wallet_address]);
+  }, [autoCode, selectedMethod?.wallet_address, selectedMethod?.qr_mode, selectedMethod?.qr_image_url]);
 
   // [RESUME] نفس فكرة استئناف الفاتورة المعلّقة — رمز فعّال سابق يُستعاد تلقائياً عند دخول الشاشة
   React.useEffect(() => {
@@ -974,7 +978,7 @@ const WalletChargeView: React.FC<WalletChargeViewProps> = React.memo(({
                     <Copy size={11} /> نسخ
                   </button>
                 </div>
-                <WalletQrButton address={selectedMethod.wallet_address} enabled={selectedMethod.qr_enabled} alwaysOpen={selectedMethod.qr_always_open} methodName={selectedMethod.name} />
+                <WalletQrButton address={selectedMethod.wallet_address} enabled={selectedMethod.qr_enabled} alwaysOpen={selectedMethod.qr_always_open} qrMode={selectedMethod.qr_mode} qrImageUrl={selectedMethod.qr_image_url} methodName={selectedMethod.name} />
                 {selectedMethod.min_amount > 0 && (
                   <p className="text-xs text-brand mt-2 font-bold">
                     أقل مبلغ: {!isUsdWallet
@@ -1062,7 +1066,7 @@ const WalletChargeView: React.FC<WalletChargeViewProps> = React.memo(({
                     <Copy size={11} /> نسخ
                   </button>
                 </div>
-                <WalletQrButton address={selectedMethod.wallet_address} enabled={selectedMethod.qr_enabled} alwaysOpen={selectedMethod.qr_always_open} methodName={selectedMethod.name} />
+                <WalletQrButton address={selectedMethod.wallet_address} enabled={selectedMethod.qr_enabled} alwaysOpen={selectedMethod.qr_always_open} qrMode={selectedMethod.qr_mode} qrImageUrl={selectedMethod.qr_image_url} methodName={selectedMethod.name} />
                 <p className="text-[10px] text-brand/70 font-medium">طريقة الدفع: {selectedMethod.name}</p>
                 {selectedMethod.description && <p className="text-xs text-brand/60 font-light mt-1">{selectedMethod.description}</p>}
                 {selectedMethod.min_amount > 0 && (

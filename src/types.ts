@@ -179,6 +179,8 @@ export interface PaymentMethod {
   wallet_address: string;
   qr_enabled?: boolean;
   qr_always_open?: boolean;
+  qr_mode?: "auto" | "image";
+  qr_image_url?: string | null;
   instructions: string;
   description?: string;
   image_url: string;
@@ -245,6 +247,8 @@ export interface StoreAppearance {
   loading_spinner_type: "pixel" | "logo_pulse" | "logo_ring";
   item_card_style: "card" | "plain";
   search_enabled: boolean;
+  marquee_enabled?: boolean;
+  marquee_text?: string;
   font_scale: number;
   font_size_cat: number | null;
   font_size_sub: number | null;

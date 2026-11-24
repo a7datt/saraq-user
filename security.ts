@@ -55,11 +55,12 @@ function verifyJwt(token: string, secret: string): any|null {
   } catch { return null; }
 }
 
-// [SECURITY FIX] تقليص مدة صلاحية توكن المستخدم من 7 أيام إلى يوم واحد + تضمين
-// token_version في الحمولة — انظر القسم 3.2 من تقرير الفحص الأمني (CWE-613).
+// [PHASE-1] مدة الجلسة أُعيدت إلى 7 أيام بطلب صاحب المتجر (كانت يوماً واحداً). يبقى إبطال
+// الجلسات عبر token_version فعّالاً. (التعليق الأصلي: تقليص من 7 أيام إلى يوم + تضمين
+// token_version في الحمولة — انظر القسم 3.2 من تقرير الفحص الأمني (CWE-613).)
 // tokenVersion (اختياري) يسمح بإبطال كل التوكنات الصادرة سابقاً دفعة واحدة عند تمريره.
 export const createUserToken  = (userId: number|string, tokenVersion: number = 0) =>
-  signJwt({ sub: String(userId), role:"user", tv: tokenVersion }, JWT_SECRET, 24*3600);
+  signJwt({ sub: String(userId), role:"user", tv: tokenVersion }, JWT_SECRET, 7*24*3600);
 export const verifyUserToken  = (t: string) => verifyJwt(t, JWT_SECRET);
 
 // ══════════════════════════════════════════════════════════════

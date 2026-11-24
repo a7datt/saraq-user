@@ -30,6 +30,8 @@ export const DEFAULT_APPEARANCE: StoreAppearance = {
   loading_spinner_type: "pixel",
   item_card_style: "card",
   search_enabled: true,
+  marquee_enabled: false,
+  marquee_text: "",
   font_scale: 100,
   font_size_cat: null,
   font_size_sub: null,

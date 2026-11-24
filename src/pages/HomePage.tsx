@@ -11,6 +11,7 @@ import OptimizedImage from "../components/OptimizedImage";
 import { gridColsClass, ratioToClass, itemCardChrome, DEFAULT_APPEARANCE, useIsMobileViewport } from "../utils/useStoreAppearance";
 import CategorySectionsAccordion from "../components/CategorySectionsAccordion";
 import SearchOverlay from "../components/SearchOverlay";
+import MarqueeBar from "../components/MarqueeBar";
 
 export interface HomePageProps {
   banners: Banner[];
@@ -178,6 +179,11 @@ export default function HomePage(props: HomePageProps) {
           )}
         </div>
       </div>
+
+    {/* [PHASE-1] شريط نص متحرك تحت البانر مباشرة وفوق البحث — من مظهر المتجر */}
+    {appearance.marquee_enabled && (appearance.marquee_text || "").trim() && (
+      <MarqueeBar text={appearance.marquee_text} />
+    )}
 
     {/* البحث — يبقي المستخدم بالصفحة الرئيسية ويعرض النتائج كقائمة منسدلة أسفله، قابل للتعطيل من لوحة التحكم ← مظهر المتجر */}
     {appearance.search_enabled !== false && (

@@ -498,3 +498,18 @@ body { font-weight: 500; }
 .animate-scale-in {
   animation: scaleIn 0.22s ease-out;
 }
+
+/* [PHASE-1] الشريط النصي المتحرك: يتحرك من اليسار لليمين بلا انقطاع */
+@keyframes saraqib-marquee-ltr {
+  from { transform: translateX(-50%); }
+  to   { transform: translateX(0); }
+}
+.saraqib-marquee-track {
+  animation-name: saraqib-marquee-ltr;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .saraqib-marquee-track { animation-duration: 120s !important; }
+}
