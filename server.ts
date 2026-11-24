@@ -5515,6 +5515,26 @@ async function startServer() {
         return res.status(statusCode).json(body);
       };
 
+      // تسجيل تدقيقي موحّد لكل محاولة تحقق تلقائي (نجحت أو رُفضت فعلياً من المزوّد نفسه) في جدول الفواتير،
+      // ليظهر نظام "كود التحقق" (شام كاش/سيرياتيل/Binance/العملات الرقمية) ضمن تبويب "الفواتير والشحن
+      // التلقائي" بلوحة الأدمن. غير معطِّل للمسار الفعلي أبداً (try/catch صامت).
+      const logAutoVerifyAudit = async (status: "paid" | "rejected", amt: number, curr: string) => {
+        try {
+          await supabase.from("shamcash_invoices").insert({
+            invoice_number: `AUTO-${txNumber}-${claimedTx.id}`,
+            transaction_id: status === "paid" ? claimedTx.id : null,
+            user_id: userId,
+            payment_method_id: paymentMethodId,
+            amount: amt > 0 ? amt : numAmount,
+            currency: curr || "USD",
+            status,
+            gateway_code: INVOICE_ELIGIBLE_METHOD_TYPES[method.method_type] || method.method_type,
+          });
+        } catch (e) {
+          console.error(`[verify-auto] فشل تسجيل سجل التدقيق لمحاولة tx_number=${txNumber}:`, e);
+        }
+      };
+
       // ============ Wallet currency & exchange rate resolution (critical) ============
       // كل طريقة دفع آلية (شام كاش/سيرياتيل كاش) يجب أن تكون مرتبطة بعملة محددة من جدول العملات.
       // بدون سعر صرف صالح لهذه العملة، يجب رفض العملية فوراً (Reject Transaction).
@@ -5600,6 +5620,7 @@ async function startServer() {
         }
         if (!verified && rejectReason) {
           console.warn(`[SEC] verify-auto syriatel rejected — userId:${userId} txNumber:${txNumber} reason:${rejectReason}`);
+          await logAutoVerifyAudit("rejected", numAmount, "SYP");
           return abortClaim(422, { error: rejectReason });
         }
       } else if (method.method_type === "shamcash") {
@@ -5620,6 +5641,7 @@ async function startServer() {
         }
         if (!verified && rejectReason) {
           console.warn(`[SEC] verify-auto shamcash rejected — userId:${userId} txNumber:${txNumber} reason:${rejectReason}`);
+          await logAutoVerifyAudit("rejected", numAmount, expectedCurrency);
           return abortClaim(422, { error: rejectReason });
         }
       } else if (method.method_type === "binance") {
@@ -5637,6 +5659,7 @@ async function startServer() {
         }
         if (!verified && rejectReason) {
           console.warn(`[SEC] verify-auto binance rejected — userId:${userId} txNumber:${txNumber} reason:${rejectReason}`);
+          await logAutoVerifyAudit("rejected", numAmount, expectedCurrency);
           return abortClaim(422, { error: rejectReason });
         }
       } else if (method.method_type === "crypto_usdt_trc20" || method.method_type === "crypto_usdt_bep20") {
@@ -5651,6 +5674,7 @@ async function startServer() {
         }
         if (!verified && rejectReason) {
           console.warn(`[SEC] verify-auto ${method.method_type} rejected — userId:${userId} txNumber:${txNumber} reason:${rejectReason}`);
+          await logAutoVerifyAudit("rejected", numAmount, "USD");
           return abortClaim(422, { error: rejectReason });
         }
       }
@@ -5718,6 +5742,7 @@ async function startServer() {
         // لو تغيّرت حالة الحجز بالتزامن بشكل غير متوقع، نرفض بأمان دون المساس بالرصيد
         return res.status(409).json({ error: "تعذّر اعتماد العملية، يرجى إعادة المحاولة" });
       }
+      await logAutoVerifyAudit("paid", apiAmount, apiCurrency);
 
       // [SEC-FIX] CWE-362: زيادة ذرّية عبر RPC بدل "قراءة ثم كتابة" لتفادي Lost Update
       // عند تزامن أكثر من عملية شحن لنفس المستخدم (راجع تعليق الإصلاح أعلاه).
