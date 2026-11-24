@@ -1,3 +1,4 @@
+import { useProductDiscounts } from "../utils/useProductDiscounts";
 import React from "react";
 import { ArrowRight, ShoppingBag, Star } from "lucide-react";
 import { motion } from "motion/react";
@@ -24,12 +25,10 @@ export interface ProductsPageProps {
 
 // [FIX] سعر VIP بعد الخصم — نفس صيغة الحساب المستخدمة في صفحة الدفع تماماً:
 // السعر بعد الخصم = السعر الأصلي × (1 - نسبة الخصم ÷ 100). إن لم يكن المستخدم VIP يُعاد السعر الأصلي دون أي تعديل.
-function getVipPrice(price: number, user: any, siteSettings?: any[]): { finalPrice: number; isVip: boolean; pct: number } {
-  const isVip = !!user?.is_vip;
-  if (!isVip) return { finalPrice: price, isVip: false, pct: 0 };
-  const pct = parseFloat(siteSettings?.find((s: any) => s.key === "vip_discount")?.value || "5") || 0;
-  const finalPrice = price * (1 - pct / 100);
-  return { finalPrice, isVip: true, pct };
+function getVipPrice(price: number, pct: number): { finalPrice: number; isVip: boolean; pct: number } {
+  // [PHASE-2] pct = نسبة الخصم الفعلية لهذا المنتج من محرك القواعد (VIP/الرتبة...) — 0 = لا خصم
+  if (!(pct > 0)) return { finalPrice: price, isVip: false, pct: 0 };
+  return { finalPrice: price * (1 - pct / 100), isVip: true, pct };
 }
 
 export default function ProductsPage(props: ProductsPageProps) {
@@ -50,6 +49,7 @@ export default function ProductsPage(props: ProductsPageProps) {
     siteSettings,
   } = props;
 
+  const productDiscounts = useProductDiscounts(products.map(p => p.id), !!user);
   const prodRatioCls = ratioToClass(appearance.prod_image_ratio);
   const isMobileViewport = useIsMobileViewport();
   // إذا كان عدد الأعمدة المختار للشاشة الحالية (جوال أو كمبيوتر) أكثر من 1، نستخدم تخطيط شبكي مربّع
@@ -163,7 +163,7 @@ export default function ProductsPage(props: ProductsPageProps) {
                   )}
                   {(() => {
                     const unitBase = isQuantity ? (Number(prod.price) || 0) / Math.max(1, parseFloat(String((prod as any).min_quantity)) || 1) : (Number(prod.price) || 0);
-                    const { finalPrice, isVip } = getVipPrice(unitBase, user, siteSettings);
+                    const { finalPrice, isVip } = getVipPrice(unitBase, productDiscounts[String(prod.id)] || 0);
                     const suffix = isQuantity ? " / وحدة" : "";
                     if (isVip) {
                       return (
@@ -269,7 +269,7 @@ export default function ProductsPage(props: ProductsPageProps) {
                   )}
                   {(() => {
                     const unitBase = isQuantity ? (Number(prod.price) || 0) / Math.max(1, parseFloat(String((prod as any).min_quantity)) || 1) : (Number(prod.price) || 0);
-                    const { finalPrice, isVip } = getVipPrice(unitBase, user, siteSettings);
+                    const { finalPrice, isVip } = getVipPrice(unitBase, productDiscounts[String(prod.id)] || 0);
                     const suffix = isQuantity ? " / وحدة" : "";
                     if (isVip) {
                       return (

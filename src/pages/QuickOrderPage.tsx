@@ -1,3 +1,4 @@
+import { useProductDiscounts } from "../utils/useProductDiscounts";
 import React, { useState } from "react";
 import { ArrowRight, ChevronDown, Star } from "lucide-react";
 import { UserData } from "../types";
@@ -45,6 +46,8 @@ const QuickOrderPage = ({
   removeFromFavorites,
 }: QuickOrderPageProps) => {
   const prod = view.data;
+  const quotedDiscounts = useProductDiscounts([prod?.id], !!user);
+  const quotedPct = quotedDiscounts[String(prod?.id)] || 0;
   const ui = React.useMemo(() => buildUi(!!isDarkMode), [isDarkMode]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -75,7 +78,7 @@ const QuickOrderPage = ({
   // خانة/خانات المعرف المُختارة صراحةً من الأدمن لتُستخدم كمصدر للتحقق من الاسم (تدعم أي نوع منتج)
   const nvSourceFields = React.useMemo(() => allFields.filter((f: any) => f.nvSource === true), [allFields]);
 
-  const vipDiscountPct = parseFloat(siteSettings?.find((s: any) => s.key === "vip_discount")?.value || "5") / 100;
+  const vipDiscountPct = quotedPct / 100; // [PHASE-2] من محرك القواعد عبر السيرفر
 
   // دعم منتجات "الباقات المحددة" (package_values) في متجر الطلب السريع
   const hasPackageValues = Array.isArray(prod?.package_values) && prod.package_values.length > 0;
@@ -86,7 +89,7 @@ const QuickOrderPage = ({
   const unitPrice = Number(prod?.price) || 0;
   const safeQty = hasPackageValues ? (selectedPackageValue ?? prod.package_values[0]) : 1;
   const baseTotal = unitPrice * safeQty;
-  const finalPrice = user?.is_vip ? baseTotal * (1 - vipDiscountPct) : baseTotal;
+  const finalPrice = vipDiscountPct > 0 ? baseTotal * (1 - vipDiscountPct) : baseTotal;
   const showBreakdown = hasPackageValues;
 
   const favKey = `prod_${prod?.id}`;
@@ -241,10 +244,10 @@ const QuickOrderPage = ({
             </div>
           )}
 
-          {user?.is_vip && (
+          {vipDiscountPct > 0 && (
             <div className="w-full mt-3 flex items-center justify-between text-xs bg-amber-500/10 border border-amber-500/20 rounded-2xl px-3.5 py-2.5">
               <div className="flex items-center gap-1.5 text-amber-500 font-bold">
-                <Star size={12} fill="currentColor" /> خصم VIP ({siteSettings?.find((s: any) => s.key === "vip_discount")?.value || "5"}%)
+                <Star size={12} fill="currentColor" /> خصمك ({+quotedPct.toFixed(2)}%)
               </div>
               <span className="text-amber-500 font-bold">- {fmtPrice(baseTotal * vipDiscountPct)}</span>
             </div>

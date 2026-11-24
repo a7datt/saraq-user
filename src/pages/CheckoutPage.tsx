@@ -1,3 +1,4 @@
+import { useProductDiscounts } from "../utils/useProductDiscounts";
 import React, { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { ArrowRight, CheckCircle, ExternalLink, Star, ChevronDown, X, Layers } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -189,6 +190,8 @@ const CheckoutPage = ({
   }, [view.data, checkoutOrderResult?.prod]);
 
   const hasProd = !!(view.data || checkoutOrderResult?.prod || prod?.id);
+  const quotedDiscounts = useProductDiscounts([prod?.id], !!user);
+  const quotedPct = quotedDiscounts[String(prod?.id)] || 0;
 
   /* ---------- تصنيف نوع المنتج ---------- */
   const isFixedQuantity = prod.min_quantity != null && prod.max_quantity != null && Number(prod.min_quantity) === Number(prod.max_quantity);
@@ -317,8 +320,8 @@ const CheckoutPage = ({
     : Math.max(1, parsedQty || 1);
 
   const baseTotal = unitPrice * safeQty;
-  const vipDiscountPct = parseFloat(siteSettings?.find((s: any) => s.key === "vip_discount")?.value || "5") / 100;
-  const finalPrice = user?.is_vip ? baseTotal * (1 - vipDiscountPct) : baseTotal;
+  const vipDiscountPct = quotedPct / 100; // [PHASE-2] من محرك القواعد عبر السيرفر
+  const finalPrice = vipDiscountPct > 0 ? baseTotal * (1 - vipDiscountPct) : baseTotal;
 
   const showBreakdown = safeQty > 1 || isPackaged;
 
@@ -487,14 +490,14 @@ const CheckoutPage = ({
 
           {/* ===== السعر ===== */}
           <div className="flex items-center justify-center gap-2 flex-wrap mt-1">
-            {user?.is_vip && <span className={`line-through text-[11px] ${ui.muted}`}>{fmtPrice(unitPrice)}</span>}
-            <span className={`font-black text-lg ${theme.text}`}>{fmtPrice(unitPrice)}</span>
+            {vipDiscountPct > 0 && <span className={`line-through text-[11px] ${ui.muted}`}>{fmtPrice(unitPrice)}</span>}
+            <span className={`font-black text-lg ${theme.text}`}>{fmtPrice(unitPrice * (1 - vipDiscountPct))}</span>
           </div>
-          {(user?.is_vip || prod.store_type === "external_api" || prod.store_type === "inventory" || isPackaged || prod.store_type === "quantities") && (
+          {(vipDiscountPct > 0 || prod.store_type === "external_api" || prod.store_type === "inventory" || isPackaged || prod.store_type === "quantities") && (
             <div className="flex items-center justify-center gap-1.5 flex-wrap mt-2">
-              {user?.is_vip && (
+              {vipDiscountPct > 0 && (
                 <span className="text-[10px] bg-amber-500/15 text-amber-500 px-2.5 py-1 rounded-full font-bold flex items-center gap-1">
-                  <Star size={9} fill="currentColor" /> VIP
+                  <Star size={9} fill="currentColor" /> {user?.is_vip ? "VIP" : "خصم"}
                 </span>
               )}
               <TypeBadge storeType={prod.store_type} isPackaged={isPackaged} />
@@ -511,10 +514,10 @@ const CheckoutPage = ({
             </div>
           )}
 
-          {user?.is_vip && (
+          {vipDiscountPct > 0 && (
             <div className="w-full mt-3 flex items-center justify-between text-xs bg-amber-500/10 border border-amber-500/20 rounded-2xl px-3.5 py-2.5">
               <div className="flex items-center gap-1.5 text-amber-500 font-bold">
-                <Star size={12} fill="currentColor" /> خصم VIP ({siteSettings?.find((s: any) => s.key === "vip_discount")?.value || "5"}%)
+                <Star size={12} fill="currentColor" /> خصمك ({+quotedPct.toFixed(2)}%)
               </div>
               <span className="text-amber-500 font-bold">- {fmtPrice(baseTotal * vipDiscountPct)}</span>
             </div>
