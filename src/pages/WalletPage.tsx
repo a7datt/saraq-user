@@ -606,7 +606,17 @@ const WalletChargeView: React.FC<WalletChargeViewProps> = React.memo(({
           </button>
           <h2 className="text-xl font-bold text-gray-800">شحن عبر {selectedMethod.name}</h2>
         </div>
-        <div className="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-6">
+        {(selectedMethod as any).requires_identity && !user?.identity_verified && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2 text-right">
+            <p className="text-sm font-bold text-amber-800">هذه الطريقة تتطلب توثيق الهوية</p>
+            <p className="text-xs text-amber-700">لا يمكنك إنشاء فاتورة أو إرسال بيانات دفع بهذه الطريقة قبل توثيق هويتك.</p>
+            <button type="button" onClick={() => setView({ type: "identity" })} className="w-full py-2.5 rounded-lg bg-amber-500 text-white text-sm font-bold">الانتقال إلى توثيق الهوية</button>
+          </div>
+        )}
+        <div
+          {...(((selectedMethod as any).requires_identity && !user?.identity_verified) ? { inert: true } : {})}
+          className={`bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-6 ${((selectedMethod as any).requires_identity && !user?.identity_verified) ? "opacity-40 pointer-events-none select-none" : ""}`}
+        >
           {isShamCashInvoiceMode ? (
             <>
               {!invoice && (selectedMethod.min_amount > 0 || ((selectedMethod as any).bonus_type && (selectedMethod as any).bonus_percent > 0 && (selectedMethod as any).bonus_visible !== false)) && (

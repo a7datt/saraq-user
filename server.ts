@@ -1936,6 +1936,100 @@ async function startServer() {
     }
   });
 
+  // [PHASE-3] بوابة توثيق الهوية لطرق الدفع التي تتطلبها (التحقق من السيرفر دائماً — لا يعتمد على الواجهة).
+  async function identityGate(userId: any, paymentMethodId: any): Promise<string | null> {
+    try {
+      const { data: m, error: mErr } = await supabase.from("payment_methods").select("requires_identity").eq("id", paymentMethodId).maybeSingle();
+      if (mErr) return "تعذر التحقق من متطلبات طريقة الدفع، حاول مجدداً.";
+      if (!m || !m.requires_identity) return null;
+      const { data: u } = await supabase.from("users").select("identity_verified").eq("id", userId).maybeSingle();
+      return u?.identity_verified ? null : "هذه الطريقة تتطلب توثيق الهوية. وثّق هويتك من صفحة حسابي أولاً.";
+    } catch { return "تعذر التحقق من حالة توثيق الهوية، حاول مجدداً."; }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // [PHASE-3] توثيق الهوية — صور الهوية تُحفظ في مخزن خاص (identity-docs) ولا يصل إليها إلا الأدمن عبر السيرفر
+  // ═══════════════════════════════════════════════════════════════════════════
+  const IDENTITY_BUCKET = "identity-docs";
+  const IDENTITY_MAX_BYTES = 6 * 1024 * 1024;
+
+  async function getIdentitySettings(): Promise<{ enabled: boolean; description: string }> {
+    const { data } = await supabase.from("settings").select("key,value").in("key", ["identity_verification_enabled", "identity_verification_description"]);
+    const m: Record<string, string> = {};
+    (data || []).forEach((r: any) => { m[r.key] = r.value; });
+    return { enabled: m.identity_verification_enabled === "true", description: m.identity_verification_description || "" };
+  }
+
+  // فحص "الأرقام السحرية" للصورة الفعلية بدل الاعتماد على ترويسة المتصفح
+  function sniffImage(buf: Buffer): { mime: string; ext: string } | null {
+    if (buf.length > 12 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { mime: "image/jpeg", ext: "jpg" };
+    if (buf.length > 12 && buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { mime: "image/png", ext: "png" };
+    if (buf.length > 12 && buf.slice(0, 4).toString("ascii") === "RIFF" && buf.slice(8, 12).toString("ascii") === "WEBP") return { mime: "image/webp", ext: "webp" };
+    return null;
+  }
+
+  app.get("/api/identity/status", authenticate, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const cfg = await getIdentitySettings();
+      const { data: u } = await supabase.from("users").select("identity_verified").eq("id", userId).maybeSingle();
+      const { data: last } = await supabase.from("identity_verifications")
+        .select("status, reject_reason, created_at, reviewed_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const verified = !!u?.identity_verified;
+      res.json({
+        enabled: cfg.enabled, description: cfg.description, verified,
+        status: verified ? "approved" : (last?.status || "none"),
+        reject_reason: !verified && last?.status === "rejected" ? (last.reject_reason || "") : "",
+        submitted_at: last?.created_at || null,
+      });
+    } catch (e: any) { safeError(res, e, "فشل تحميل حالة التوثيق"); }
+  });
+
+  // رفع صورة واحدة (أمامية/خلفية) كبايتات خام — تُخزَّن في المخزن الخاص ويُرجع مفتاحها فقط
+  app.post("/api/identity/upload/:side", authenticate, uploadLimiter,
+    express.raw({ type: ["image/jpeg", "image/png", "image/webp"], limit: IDENTITY_MAX_BYTES }),
+    async (req, res) => {
+      try {
+        const userId = String((req as any).userId);
+        const side = req.params.side;
+        if (side !== "front" && side !== "back") return res.status(400).json({ error: "جهة الصورة غير صحيحة" });
+        const cfg = await getIdentitySettings();
+        if (!cfg.enabled) return res.status(403).json({ error: "توثيق الهوية غير متاح حالياً" });
+        const buf: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        if (buf.length === 0) return res.status(400).json({ error: "لم يتم إرسال صورة" });
+        if (buf.length > IDENTITY_MAX_BYTES) return res.status(413).json({ error: "حجم الصورة كبير (الحد 6MB)" });
+        const kind = sniffImage(buf);
+        if (!kind) return res.status(400).json({ error: "صيغة الصورة غير مدعومة (JPG أو PNG أو WEBP)" });
+        const key = `${userId}/${crypto.randomUUID()}-${side}.${kind.ext}`;
+        const { error } = await supabase.storage.from(IDENTITY_BUCKET).upload(key, buf, { contentType: kind.mime, upsert: false });
+        if (error) throw error;
+        res.json({ key });
+      } catch (e: any) { safeError(res, e, "فشل رفع الصورة"); }
+    });
+
+  app.post("/api/identity/submit", authenticate, uploadLimiter, async (req, res) => {
+    try {
+      const userId = String((req as any).userId);
+      const { frontKey, backKey } = req.body || {};
+      const cfg = await getIdentitySettings();
+      if (!cfg.enabled) return res.status(403).json({ error: "توثيق الهوية غير متاح حالياً" });
+      const okKey = (k: any, side: string) => typeof k === "string" && k.length < 200 && new RegExp(`^${userId}/[0-9a-f-]{36}-${side}\\.(jpg|png|webp)$`).test(k);
+      if (!okKey(frontKey, "front") || !okKey(backKey, "back")) return res.status(400).json({ error: "يجب رفع صورة الهوية الأمامية والخلفية" });
+
+      const { data: u } = await supabase.from("users").select("identity_verified").eq("id", userId).maybeSingle();
+      if (u?.identity_verified) return res.status(400).json({ error: "حسابك موثّق بالفعل" });
+      const { data: pending } = await supabase.from("identity_verifications").select("id").eq("user_id", userId).eq("status", "pending").maybeSingle();
+      if (pending) return res.status(409).json({ error: "لديك طلب توثيق قيد المراجعة بالفعل" });
+
+      const { error } = await supabase.from("identity_verifications").insert({ user_id: userId, status: "pending", front_path: frontKey, back_path: backKey });
+      if (error) {
+        if ((error as any).code === "23505") return res.status(409).json({ error: "لديك طلب توثيق قيد المراجعة بالفعل" });
+        throw error;
+      }
+      res.json({ success: true, status: "pending" });
+    } catch (e: any) { safeError(res, e, "فشل إرسال طلب التوثيق"); }
+  });
+
   app.get("/api/ranks/me", authenticate, async (req, res) => {
     try {
       const userId = (req as any).userId;
@@ -4753,6 +4847,7 @@ async function startServer() {
       const { paymentMethodId, amount } = req.body;
       if (!paymentMethodId || !amount) return res.status(400).json({ error: "بيانات ناقصة" });
       if (!isValidId(paymentMethodId)) return res.status(400).json({ error: "طريقة دفع غير صحيحة" });
+      { const idBlock = await identityGate(userId, paymentMethodId); if (idBlock) return res.status(403).json({ error: idBlock, code: "IDENTITY_REQUIRED" }); }
 
       // [RESUME] إن كانت للمستخدم فاتورة معلّقة سارية بالفعل، نُعيدها كما هي بدل إنشاء فاتورة
       // وحجز "قيد التحقق" جديدين — يمنع تكدّس عدة حجوزات معلّقة لمستخدم واحد ويتيح له إكمال
@@ -4902,6 +4997,7 @@ async function startServer() {
       const { data: inv } = await supabase.from("shamcash_invoices")
         .select("*").eq("invoice_number", invoiceNumber).eq("user_id", userId).single();
       if (!inv) return res.status(404).json({ error: "الفاتورة غير موجودة" });
+      { const idBlock = await identityGate(userId, inv.payment_method_id); if (idBlock) return res.status(403).json({ error: idBlock, code: "IDENTITY_REQUIRED" }); }
       if (inv.status !== "pending") {
         const map: Record<string, string> = { paid: "هذه الفاتورة مدفوعة بالفعل.", expired: "انتهت صلاحية هذه الفاتورة.", cancelled: "تم إلغاء هذه الفاتورة." };
         return res.status(409).json({ error: map[inv.status] || "حالة الفاتورة لا تسمح بالتحقق" });
@@ -5031,6 +5127,7 @@ async function startServer() {
       const userId = (req as any).userId;
       const { paymentMethodId } = req.body;
       if (!paymentMethodId || !isValidId(paymentMethodId)) return res.status(400).json({ error: "طريقة دفع غير صحيحة" });
+      { const idBlock = await identityGate(userId, paymentMethodId); if (idBlock) return res.status(403).json({ error: idBlock, code: "IDENTITY_REQUIRED" }); }
 
       // [RESUME] إن وُجد رمز فعّال سارٍ بالفعل لهذا المستخدم، نُعيده كما هو بدل توليد رمز جديد
       const { data: existing } = await supabase.from("auto_charge_codes")
@@ -5152,6 +5249,7 @@ async function startServer() {
       const { data: codeRow } = await supabase.from("auto_charge_codes")
         .select("*").eq("code", code).eq("user_id", userId).eq("status", "pending").maybeSingle();
       if (!codeRow) return res.status(404).json({ error: "لا يوجد رمز شحن معلّق بهذا الرقم. أنشئ رمزاً جديداً." });
+      { const idBlock = await identityGate(userId, codeRow.payment_method_id); if (idBlock) return res.status(403).json({ error: idBlock, code: "IDENTITY_REQUIRED" }); }
 
       if (new Date(codeRow.expires_at).getTime() < Date.now()) {
         await supabase.from("auto_charge_codes").update({ status: "expired", updated_at: new Date().toISOString() }).eq("id", codeRow.id).eq("status", "pending");
@@ -5352,6 +5450,7 @@ async function startServer() {
         return res.status(400).json({ error: "بيانات ناقصة" });
       }
       if (!isValidId(paymentMethodId)) return res.status(400).json({ error: "طريقة دفع غير صحيحة" });
+      { const idBlock = await identityGate(userId, paymentMethodId); if (idBlock) return res.status(403).json({ error: idBlock, code: "IDENTITY_REQUIRED" }); }
       // نسمح بمبلغ أكبر إذا كان بالليرة السورية (حتى 50 مليون)
       const maxAmount = (inputCurrency === "SYP" || String(inputCurrency).toUpperCase() === "SYP") ? 50000000 : 100000;
       if (!isValidAmount(amount, 0.01, maxAmount)) return res.status(400).json({ error: "المبلغ غير صحيح" });
@@ -5663,6 +5762,7 @@ async function startServer() {
       const { paymentMethodId, amount, originalAmount, originalCurrency, note, receiptImageUrl, customFieldsData } = req.body;
       // Validation
       if (!isValidId(paymentMethodId)) return res.status(400).json({ error: "طريقة دفع غير صحيحة" });
+      { const idBlock = await identityGate(userId, paymentMethodId); if (idBlock) return res.status(403).json({ error: idBlock, code: "IDENTITY_REQUIRED" }); }
       if (!isValidAmount(amount, 0.01, 100000)) return res.status(400).json({ error: "المبلغ يجب أن يكون رقماً موجباً" });
       if (note && typeof note === "string" && note.length > 300) return res.status(400).json({ error: "الملاحظة طويلة جداً (أقصاه 300 حرف)" });
       if (receiptImageUrl && !isValidUrl(receiptImageUrl)) return res.status(400).json({ error: "رابط الإيصال غير صحيح" });

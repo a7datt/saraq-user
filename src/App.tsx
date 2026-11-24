@@ -118,6 +118,7 @@ import GooglePhoneGateModal from "./components/GooglePhoneGateModal";
 import SubcategoriesPage from "./pages/SubcategoriesPage";
 import SubSubCategoriesPage from "./pages/SubSubCategoriesPage";
 import ProductsPage from "./pages/ProductsPage";
+import IdentityVerificationPage from "./pages/IdentityVerificationPage";
 import QuickOrderPage from "./pages/QuickOrderPage";
 import CheckoutPage from "./pages/CheckoutPage";
 import WalletPage from "./pages/WalletPage";
@@ -825,6 +826,8 @@ export default function App() {
       url = "/profile/edit";
     } else if (view.type === "referral") {
       url = "/profile/referral";
+    } else if (view.type === "identity") {
+      url = "/profile/identity";
     } else if (view.type === "ranks") {
       url = "/profile/ranks";
     } else if (view.type === "active_sessions") {
@@ -897,6 +900,8 @@ export default function App() {
         setActiveTab("profile"); setView({ type: "edit_profile" });
       } else if (path === "/profile/referral") {
         setActiveTab("profile"); setView({ type: "referral" });
+      } else if (path === "/profile/identity") {
+        setActiveTab("profile"); setView({ type: "identity" });
       } else if (path === "/profile/ranks") {
         setActiveTab("profile"); setView({ type: "ranks" });
       } else if (path === "/profile/active-sessions") {
@@ -3095,7 +3100,7 @@ export default function App() {
                   </>
                 )}
                 {activeTab === "wallet" && (user ? <WalletPage user={user} paymentMethods={paymentMethods} setView={setView} fetchUser={fetchUser} fetchTransactions={fetchTransactions} sypRate={sypRate} appearance={appearance} /> : (view.type === "forgot_password" ? <ForgotPasswordPage setUser={setUser} setView={setView} setActiveTab={setActiveTab} /> : <LoginPage theme={theme} setUser={setUser} setView={setView} setActiveTab={setActiveTab} />))}
-                {activeTab === "orders" && (user ? <OrdersPage orders={orders} setActiveTab={setActiveTab} fetchOrders={fetchOrders} /> : (view.type === "forgot_password" ? <ForgotPasswordPage setUser={setUser} setView={setView} setActiveTab={setActiveTab} /> : <LoginPage theme={theme} setUser={setUser} setView={setView} setActiveTab={setActiveTab} />))}
+                {activeTab === "orders" && (user ? <OrdersPage user={user} orders={orders} setActiveTab={setActiveTab} fetchOrders={fetchOrders} /> : (view.type === "forgot_password" ? <ForgotPasswordPage setUser={setUser} setView={setView} setActiveTab={setActiveTab} /> : <LoginPage theme={theme} setUser={setUser} setView={setView} setActiveTab={setActiveTab} />))}
                 {activeTab === "profile" && (
                   <>
                     {view.type === "main" && <ProfilePage user={user} theme={theme} setView={setView} handleGenerateLinkingCode={handleGenerateLinkingCode} handleLogout={handleLogout} telegramBotAvailable={telegramBotStatus.available} />}
@@ -3103,10 +3108,11 @@ export default function App() {
                     {view.type === "active_sessions" && <ActiveSessionsPage user={user} theme={theme} setView={setView} />}
                     {view.type === "sessions_activity" && <SessionsActivityPage user={user} theme={theme} setView={setView} />}
                     {view.type === "leaderboard" && <LeaderboardPage user={user} theme={theme} setView={setView} />}
-                    {view.type === "payments" && <PaymentsPage setView={setView} transactions={transactions} orders={orders} />}
+                    {view.type === "payments" && <PaymentsPage user={user} setView={setView} transactions={transactions} orders={orders} />}
                     {view.type === "edit_profile" && <EditProfilePage user={user} theme={theme} setView={setView} fetchUser={fetchUser} />}
                     {view.type === "profile_forgot_password" && <ForgotPasswordPage setUser={setUser} setView={setView} setActiveTab={setActiveTab} initialEmail={user?.email || ""} lockEmail backView={{ type: "edit_profile" }} />}
                     {view.type === "referral" && <ReferralPage user={user} siteSettings={siteSettings} setView={setView} />}
+                    {view.type === "identity" && <IdentityVerificationPage user={user} setView={setView} fetchUser={fetchUser} />}
                     {view.type === "ranks" && <RanksPage user={user} setView={setView} setActiveTab={setActiveTab} rankInfo={rankInfo} refreshRank={refreshRank} />}
                     {view.type === "privacy_policy" && <PrivacyPolicyPage setView={setView} />}
                     {view.type === "faq" && <FaqPage setView={setView} />}

@@ -1,3 +1,4 @@
+import { UserNameBar } from "../components/VerifiedBadge";
 import { useState, useMemo } from "react";
 import {
   CheckCircle,
@@ -19,6 +20,7 @@ import { formatPriceUSD } from "../utils/formatPrice";
 import { buildOrderShareData, getArabicStatus, OrderShareRow } from "../utils/orderShare";
 
 export interface OrdersPageProps {
+  user?: { name?: string; identity_verified?: boolean } | null;
   orders: Order[];
   setActiveTab: (tab: string) => void;
   fetchOrders: () => void;
@@ -31,7 +33,7 @@ function formatResponseTime(seconds?: number | null): string | null {
   return `${(seconds / 3600).toFixed(1)} ساعة`;
 }
 
-export default function OrdersPage({ orders, setActiveTab, fetchOrders }: OrdersPageProps) {
+export default function OrdersPage({ orders, setActiveTab, fetchOrders, user }: OrdersPageProps) {
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'failed' | 'pending'>('all');
   const [dateFrom, setDateFrom] = useState<string>(""); // yyyy-mm-dd
@@ -184,6 +186,7 @@ export default function OrdersPage({ orders, setActiveTab, fetchOrders }: Orders
 
   return (
     <div className="px-4 space-y-4 pb-20">
+      <UserNameBar user={user} />
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-2xl font-bold text-gray-800">طلباتي</h2>
         <button

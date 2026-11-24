@@ -1,3 +1,5 @@
+import React from "react";
+import VerifiedBadge from "../components/VerifiedBadge";
 import {
   User,
   UserCircle,
@@ -60,6 +62,17 @@ const ProfileItem = ({ icon, label, onClick, className = "", badge }: any) => (
 );
 
 export default function ProfilePage({ user, theme, setView, handleGenerateLinkingCode, handleLogout, telegramBotAvailable = true }: ProfilePageProps) {
+  // [PHASE-3] زر "توثيق الهوية" يظهر فقط إذا فعّله الأدمن (أو كان المستخدم موثّقاً/لديه طلب)
+  const [identity, setIdentity] = React.useState<{ enabled: boolean; status: string } | null>(null);
+  React.useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    let token = "";
+    try { token = localStorage.getItem("authToken") || ""; } catch {}
+    fetch("/api/identity/status", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null).then(d => { if (!cancelled && d) setIdentity({ enabled: !!d.enabled, status: d.status }); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?.id, user?.identity_verified]);
   return (
     <div className="px-4 space-y-4 pb-20">
 
@@ -75,7 +88,7 @@ export default function ProfilePage({ user, theme, setView, handleGenerateLinkin
       {/* الاسم + الشارة بجانب بعض */}
       {user?.name && (
         <div className="flex items-center justify-center gap-2 -mt-1 flex-wrap">
-          <p className="text-base font-semibold text-gray-800">{user.name}</p>
+          <p className="text-base font-semibold text-gray-800">{user.name}{user?.identity_verified && <VerifiedBadge />}</p>
           {user?.stats?.profile_badge && (
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold badge-${user.stats.profile_badge} inline-flex items-center gap-1`}>
               {user.stats.profile_badge === 'bronze' && <Award size={10} />}
@@ -135,6 +148,17 @@ export default function ProfilePage({ user, theme, setView, handleGenerateLinkin
             <span className="text-[10px] font-bold">الترتيب</span>
           </button>
         </div>
+      )}
+
+      {user && identity && (identity.enabled || identity.status === "approved") && (
+        <button onClick={() => setView({ type: "identity" })} className="w-full flex items-center gap-3 bg-white border border-sky-100 rounded-2xl p-3.5 active:scale-[0.99] transition-transform">
+          <ShieldCheck size={22} className="text-sky-500 shrink-0" />
+          <span className="flex-1 text-right text-sm font-bold text-gray-800">توثيق الهوية</span>
+          <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${identity.status === "approved" ? "bg-green-50 text-green-700" : identity.status === "pending" ? "bg-amber-50 text-amber-700" : identity.status === "rejected" ? "bg-red-50 text-red-600" : "bg-gray-100 text-gray-500"}`}>
+            {identity.status === "approved" ? "موثّق" : identity.status === "pending" ? "قيد المراجعة" : identity.status === "rejected" ? "مرفوض" : "غير موثّق"}
+          </span>
+          <ChevronRight size={18} className="text-gray-300" />
+        </button>
       )}
 
       {/* فاصل خفيف */}

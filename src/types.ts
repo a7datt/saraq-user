@@ -94,6 +94,7 @@ export interface MyRankInfo {
 
 export interface UserData {
   id: number;
+  identity_verified?: boolean;
   name: string;
   email: string;
   balance: number;
@@ -181,6 +182,7 @@ export interface PaymentMethod {
   qr_always_open?: boolean;
   qr_mode?: "auto" | "image";
   qr_image_url?: string | null;
+  requires_identity?: boolean;
   instructions: string;
   description?: string;
   image_url: string;

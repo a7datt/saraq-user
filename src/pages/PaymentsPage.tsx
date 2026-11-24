@@ -1,3 +1,4 @@
+import { UserNameBar } from "../components/VerifiedBadge";
 import React, { useState, useMemo } from "react";
 import {
   ArrowRight, CheckCircle, ChevronDown, Clock, XCircle,
@@ -207,12 +208,13 @@ const LedgerModal: React.FC<LedgerModalProps> = ({ transactions, orders, onClose
 // ===================== END LEDGER MODAL =====================
 
 export interface PaymentsPageProps {
+  user?: { name?: string; identity_verified?: boolean } | null;
   setView: (val: any) => void;
   transactions: Transaction[];
   orders?: Order[];
 }
 
-const PaymentsPage = ({ setView, transactions, orders = [] }: PaymentsPageProps) => {
+const PaymentsPage = ({ setView, transactions, orders = [], user }: PaymentsPageProps) => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<'approved' | 'pending' | 'rejected'>('approved');
   const [dateFrom, setDateFrom] = useState("");
@@ -248,6 +250,7 @@ const PaymentsPage = ({ setView, transactions, orders = [] }: PaymentsPageProps)
 
   return (
     <div className="px-4 space-y-4 pb-20">
+      <UserNameBar user={user} />
       {/* رأس الصفحة */}
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
