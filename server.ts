@@ -912,10 +912,12 @@ async function getProviderForProduct(productId: number): ReturnType<typeof getPr
  */
 async function syncInventoryProductsAvailability(filter: { subcategory_id?: any; sub_sub_category_id?: any } = {}): Promise<void> {
   try {
-    let query = supabase.from("products").select("id, inventory_group_id, available").eq("store_type", "inventory").not("inventory_group_id", "is", null);
-    if (filter.subcategory_id) query = query.eq("subcategory_id", filter.subcategory_id);
-    if (filter.sub_sub_category_id) query = query.eq("sub_sub_category_id", filter.sub_sub_category_id);
-    const { data: invProducts } = await query;
+    const invProducts = await fetchAllRowsPaged((f, t) => {
+      let query: any = supabase.from("products").select("id, inventory_group_id, available").eq("store_type", "inventory").not("inventory_group_id", "is", null);
+      if (filter.subcategory_id) query = query.eq("subcategory_id", filter.subcategory_id);
+      if (filter.sub_sub_category_id) query = query.eq("sub_sub_category_id", filter.sub_sub_category_id);
+      return query.order("id", { ascending: true }).range(f, t);
+    });
     if (!invProducts || invProducts.length === 0) return;
 
     for (const p of invProducts) {
@@ -1743,6 +1745,22 @@ async function startServer() {
       if (catMatch) return true;
     }
     return false;
+  };
+
+  // [PERF] يحمّل صلاحيات التوكن مرة واحدة ثم يفحص كل منتج في الذاكرة (بدل عدة استعلامات لكل منتج —
+  // كان ذلك يُبطئ قائمة المنتجات جداً وقد ينهار مع آلاف المنتجات).
+  const getTokenAllowanceChecker = async (tokenId: number | string): Promise<(p: any) => boolean> => {
+    const { data: tokenRow } = await supabase.from("api_tokens").select("scope").eq("id", tokenId).maybeSingle();
+    if (tokenRow?.scope === "all") return () => true;
+    const prodRows = await fetchAllRowsPaged((f, t) => supabase.from("api_token_products").select("product_id").eq("token_id", tokenId).order("id").range(f, t));
+    const catRows = await fetchAllRowsPaged((f, t) => supabase.from("api_token_categories").select("category_type, category_id").eq("token_id", tokenId).order("id").range(f, t));
+    const prods = new Set(prodRows.map((r: any) => String(r.product_id)));
+    const cats = new Set(catRows.map((r: any) => `${r.category_type}:${r.category_id}`));
+    return (p: any) =>
+      prods.has(String(p.id)) ||
+      (!!p.sub_sub_category_id && cats.has(`sub_sub_category:${p.sub_sub_category_id}`)) ||
+      (!!p.subcategory_id && cats.has(`subcategory:${p.subcategory_id}`)) ||
+      (!!p?.subcategories?.category_id && cats.has(`category:${p.subcategories.category_id}`));
   };
 
   // ═══ إعدادات الـ API العامة (Public API Settings) ═══
@@ -2718,22 +2736,15 @@ async function startServer() {
       await syncInventoryProductsAvailability({ sub_sub_category_id: req.params.id });
       // [FIX] نفس مشكلة ترتيب المنتجات: كان بدون .order إطلاقاً، فنضيف ترتيباً
       // ثابتاً بـ order_index ثم id كي لا يتغير الترتيب أو يتحرك المنتج الذي نفذ.
-      let { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .eq("sub_sub_category_id", req.params.id)
-        .order("order_index", { ascending: true })
-        .order("id", { ascending: true });
-      if (error && (error as any).code === "42703") {
-        const fallback = await supabase
-          .from("products")
-          .select("*")
-          .eq("sub_sub_category_id", req.params.id)
-          .order("id", { ascending: true });
-        data = fallback.data;
-        error = fallback.error;
+      // [FIX-PAGINATION] جلب مُصفّح (حدّ 1000 صف)
+      let data: any[];
+      try {
+        data = await fetchAllRowsPaged((f, t) => supabase.from("products").select("*").eq("sub_sub_category_id", req.params.id)
+          .order("order_index", { ascending: true }).order("id", { ascending: true }).range(f, t));
+      } catch (err: any) {
+        if (err?.code !== "42703") throw err;
+        data = await fetchAllRowsPaged((f, t) => supabase.from("products").select("*").eq("sub_sub_category_id", req.params.id).order("id", { ascending: true }).range(f, t));
       }
-      if (error) throw error;
       res.json(Array.isArray(data) ? data : []);
     } catch (e: any) {
       safeError(res, e, "فشل تحميل منتجات هذا التصنيف الفرعي الثانوي");
@@ -4402,26 +4413,23 @@ async function startServer() {
     try {
       const tokenId = (req as any).apiTokenId;
       const { products_id, base } = req.query as any;
-      let query = supabase.from("products").select("*, subcategories(name, category_id, categories(name))");
-      if (products_id) {
-        const ids = String(products_id).split(",").map((s) => s.trim()).filter(Boolean);
-        if (ids.length) query = query.in("id", ids);
+      const idList = products_id ? String(products_id).split(",").map((x) => x.trim()).filter(Boolean) : [];
+      const mkQuery = () => {
+        let q: any = supabase.from("products").select("*, subcategories(name, category_id, categories(name))");
+        if (idList.length) q = q.in("id", idList);
+        return q;
+      };
+      // [FIX-PAGINATION] جلب مُصفّح: حدّ PostgREST 1000 صف كان يُسقط المنتجات بعد الألف من قائمة الـ API
+      let data: any[] = [];
+      try {
+        data = await fetchAllRowsPaged((f, t) => mkQuery().order("order_index", { ascending: true }).order("id", { ascending: true }).range(f, t));
+      } catch (err: any) {
+        if (err?.code !== "42703") throw err;
+        data = await fetchAllRowsPaged((f, t) => mkQuery().order("id", { ascending: true }).range(f, t));
       }
-      // [FIX] إضافة ترتيب صريح بـ order_index حتى تلتزم واجهة الـ API الخارجية أيضاً بترتيب الأدمن
-      let { data, error } = await query.order("order_index", { ascending: true }).order("id", { ascending: true });
-      if (error && (error as any).code === "42703") {
-        let fq2 = supabase.from("products").select("*, subcategories(name, category_id, categories(name))");
-        if (products_id) {
-          const ids = String(products_id).split(",").map((s) => s.trim()).filter(Boolean);
-          if (ids.length) fq2 = fq2.in("id", ids);
-        }
-        const fb = await fq2.order("id", { ascending: true });
-        data = fb.data; error = fb.error;
-      }
-      if (error) throw error;
 
-      const checks = await Promise.all((data || []).map((p: any) => isProductAllowedForToken(tokenId, p.id)));
-      const allowed = (data || []).filter((_: any, i: number) => checks[i]);
+      const isAllowed = await getTokenAllowanceChecker(tokenId);
+      const allowed = (data || []).filter((p: any) => isAllowed(p));
       const apiDiscountFor = await getApiDiscountResolver(tokenId);
       res.json({ status: "OK", data: allowed.map((p: any) => mapProductForClientApi(p, !!base, apiDiscountFor(p))) });
     } catch (e: any) {
@@ -4436,18 +4444,17 @@ async function startServer() {
 
       const { data: subSubCategories } = await supabase.from("sub_sub_categories").select("*").eq("subcategory_id", categoryId).order("order_index");
       // [FIX] كان الترتيب غائباً هنا أيضاً (نفس مشكلة استبدال ترتيب الأدمن بترتيب فيزيائي عشوائي)
-      let { data: products, error: productsErr } = await supabase
-        .from("products").select("*, subcategories(name, category_id, categories(name))").eq("subcategory_id", categoryId)
-        .order("order_index", { ascending: true }).order("id", { ascending: true });
-      if (productsErr && (productsErr as any).code === "42703") {
-        const fallback = await supabase
-          .from("products").select("*, subcategories(name, category_id, categories(name))").eq("subcategory_id", categoryId)
-          .order("id", { ascending: true });
-        products = fallback.data;
+      const mkContentQuery = () => supabase.from("products").select("*, subcategories(name, category_id, categories(name))").eq("subcategory_id", categoryId);
+      let products: any[] = [];
+      try {
+        products = await fetchAllRowsPaged((f, t) => mkContentQuery().order("order_index", { ascending: true }).order("id", { ascending: true }).range(f, t));
+      } catch (err: any) {
+        if (err?.code !== "42703") throw err;
+        products = await fetchAllRowsPaged((f, t) => mkContentQuery().order("id", { ascending: true }).range(f, t));
       }
 
-      const checks = await Promise.all((products || []).map((p: any) => isProductAllowedForToken(tokenId, p.id)));
-      const allowedProducts = (products || []).filter((_: any, i: number) => checks[i]);
+      const isAllowedContent = await getTokenAllowanceChecker(tokenId);
+      const allowedProducts = (products || []).filter((p: any) => isAllowedContent(p));
       const apiDiscountFor = await getApiDiscountResolver(tokenId);
 
       res.json({
