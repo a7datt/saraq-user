@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Phone, Check, Dumbbell, Mail, Lock, User, Eye, EyeOff, Gift } from "lucide-react";
+import { Phone, Check, Dumbbell, Mail, Lock, User, Eye, EyeOff, Gift, Briefcase } from "lucide-react";
 import CountryCodePhoneInput, { isValidPhoneForCountry, getRequiredDigits } from "../components/CountryCodePhoneInput";
 import { UserData } from "../types";
 import VerifyEmailView from "../components/VerifyEmailView";
@@ -120,7 +120,13 @@ function PasswordStrength({ password }: { password: string }) {
 }
 
 export default function LoginPage({ theme, setUser, setView, setActiveTab }: LoginPageProps) {
-  const [isRegister, setIsRegister] = useState(false);
+  const [isRegister, setIsRegister] = useState(() => { try { return !!localStorage.getItem("agentCode"); } catch { return false; } });
+  // [AGENTS] كود الوكيل (يُعبّأ تلقائياً من رابط الوكيل ?agent=CODE) — يظهر فقط إن كان نظام الوكلاء مفعّلاً
+  const [agentCode, setAgentCode] = useState(() => { try { return localStorage.getItem("agentCode") || ""; } catch { return ""; } });
+  const [agentsEnabled, setAgentsEnabled] = useState(false);
+  useEffect(() => {
+    fetch("/api/agents/config").then(r => r.ok ? r.json() : null).then(d => setAgentsEnabled(!!d?.enabled)).catch(() => {});
+  }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -172,6 +178,7 @@ export default function LoginPage({ theme, setUser, setView, setActiveTab }: Log
     if (data.token) localStorage.setItem("authToken", data.token);
     localStorage.setItem("userId", String(data.id));
     localStorage.removeItem("referralCode");
+    localStorage.removeItem("agentCode");
     setView({ type: "main" });
     setActiveTab("home");
   };
@@ -215,7 +222,7 @@ export default function LoginPage({ theme, setUser, setView, setActiveTab }: Log
 
     const endpoint = isRegister ? "/api/auth/register" : "/api/auth/login";
     const body = isRegister
-      ? { name: name.trim(), email: email.trim().toLowerCase(), password, phone: `${phoneCountryCode}${phone.replace(/\D/g, "")}`, referralCode, captchaToken }
+      ? { name: name.trim(), email: email.trim().toLowerCase(), password, phone: `${phoneCountryCode}${phone.replace(/\D/g, "")}`, referralCode, captchaToken, ...(agentsEnabled && agentCode.trim() ? { agentCode: agentCode.trim() } : {}) }
       : { email: email.trim().toLowerCase(), password };
 
     try {
@@ -404,6 +411,16 @@ export default function LoginPage({ theme, setUser, setView, setActiveTab }: Log
             placeholder="كود الإحالة (اختياري)"
             value={referralCode}
             onChange={(e) => setReferralCode(e.target.value)}
+          />
+        )}
+
+        {isRegister && agentsEnabled && (
+          <InputField
+            icon={<Briefcase size={18} />}
+            type="text"
+            placeholder="كود الوكيل (اختياري)"
+            value={agentCode}
+            onChange={(e) => setAgentCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16))}
           />
         )}
 

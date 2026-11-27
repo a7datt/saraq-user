@@ -46,6 +46,7 @@ const GooglePhoneGateModal: React.FC<GooglePhoneGateModalProps> = ({ pending, on
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           googleTempToken: pending.googleTempToken,
+          agentCode: localStorage.getItem("agentCode") || undefined,
           countryCode,
           phone: digitsOnly,
         }),

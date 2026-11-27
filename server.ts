@@ -18,6 +18,7 @@ import crypto from "crypto";
 import fs from "fs";
 import { resolveSeoForPath, injectSeoIntoHtml, buildRobotsTxt, buildSitemapXml } from "./seo.ts";
 import { VOLSEVER_GAME_MAP, verifyVolseverName } from "./volsever.ts";
+import { createAgentCore } from "./agentCore.ts";
 import { applyPaymentMethodBonus, generateAutoChargeCode, timingSafeEqualStrings, encryptProviderData, decryptProviderData, isEncrypted } from "./paymentMath.ts";
 
 /**
@@ -1903,6 +1904,49 @@ async function startServer() {
     }
   });
 
+  // =================== [AGENTS] نظام الوكلاء ===================
+  const agentCore = createAgentCore(supabase);
+
+  // إعدادات عامة لإظهار/إخفاء عناصر الوكلاء في الواجهة (حقل كود الوكيل، القائمة الجانبية)
+  app.get("/api/agents/config", async (_req, res) => {
+    try {
+      const st = await agentCore.getAgentSettings();
+      let hasDirectory = false;
+      if (st.directoryEnabled) {
+        const { count } = await supabase.from("agents_directory").select("id", { count: "exact", head: true }).eq("is_active", true);
+        hasDirectory = (count || 0) > 0;
+      }
+      res.json({ enabled: st.enabled, mode: st.mode, directoryEnabled: st.directoryEnabled && hasDirectory, percent: st.percent });
+    } catch (e: any) { safeError(res, e, "فشل تحميل إعدادات الوكلاء"); }
+  });
+
+  // صفحة "وكلائنا" (عامة)
+  app.get("/api/agents/directory", async (_req, res) => {
+    try {
+      const st = await agentCore.getAgentSettings();
+      if (!st.directoryEnabled) return res.json([]);
+      const { data, error } = await supabase.from("agents_directory")
+        .select("id, name, image_url, website_url, phone, location, description, sort_order")
+        .eq("is_active", true).order("sort_order", { ascending: true }).order("id", { ascending: true });
+      if (error) throw error;
+      res.json(data || []);
+    } catch (e: any) { safeError(res, e, "فشل تحميل قائمة الوكلاء"); }
+  });
+
+  // حساب الوكيل: الكود والرابط والعملاء (رقم الحساب، الاسم، الإيميل، إجمالي الشحن، الرصيد الحالي)
+  app.get("/api/agent/me", authenticate, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const st = await agentCore.getAgentSettings();
+      const { data: me } = await supabase.from("users").select("id, agent_enabled, is_banned").eq("id", userId).maybeSingle();
+      if (!me) return res.status(404).json({ error: "المستخدم غير موجود" });
+      if (!agentCore.isAgentWith(st, me)) return res.json({ system_enabled: st.enabled, is_agent: false });
+      const code = await agentCore.ensureAgentCode(userId);
+      const info = await agentCore.getAgentClients(userId);
+      res.json({ system_enabled: true, is_agent: true, code, percent: st.percent, ...info });
+    } catch (e: any) { safeError(res, e, "فشل تحميل حساب الوكيل"); }
+  });
+
   // =================== RANKS (نظام الرتب) ===================
   const RANK_PUBLIC_COLS = "id, name, image_url, color, required_amount, has_discount, discount_percent, description, benefits, is_active, sort_order";
 
@@ -2843,7 +2887,7 @@ async function startServer() {
 
   // STEP 1: Send OTP for email verification before creating account
   app.post("/api/auth/register", authLimiter, async (req, res) => {
-    const { name, email, password, phone, referralCode } = req.body;
+    const { name, email, password, phone, referralCode, agentCode } = req.body;
     // [SEC] التحقق من CAPTCHA أولاً (مُعطّل تلقائياً حتى ضبط TURNSTILE_SECRET) — يوقف الأتمتة
     if (!(await verifyCaptcha((req.body as any)?.captchaToken, getClientIp(req)))) {
       return res.status(400).json({ error: "فشل التحقق من الكابتشا. يرجى إعادة المحاولة." });
@@ -2855,6 +2899,12 @@ async function startServer() {
     if (!isValidPassword(password)) return res.status(400).json({ error: "كلمة المرور يجب أن تكون 8 أحرف على الأقل" });
     if (!phone || !isValidPhone(phone)) return res.status(400).json({ error: "رقم الهاتف مطلوب ويجب أن يكون صحيحاً (أرقام فقط)" });
     if (referralCode && !isValidId(referralCode)) return res.status(400).json({ error: "رمز الإحالة غير صحيح" });
+    // [AGENTS] كود الوكيل (اختياري): يُقبل فقط إن كان النظام مفعّلاً والوكيل مؤهّلاً
+    let agentIdForNew: number | null = null;
+    if (agentCode && String(agentCode).trim()) {
+      agentIdForNew = await agentCore.resolveAgentIdByCode(agentCode);
+      if (!agentIdForNew) return res.status(400).json({ error: "كود الوكيل غير صحيح أو غير مفعّل" });
+    }
     try {
       // Check email not already registered & verified
       const { data: existing } = await supabase.from("users").select("id, is_verified").eq("email", email).single();
@@ -2870,7 +2920,7 @@ async function startServer() {
       let userId: number;
       if (existing && !existing.is_verified) {
         // Update existing unverified user
-        await supabase.from("users").update({ name, password_hash: hashedPassword, phone }).eq("id", existing.id);
+        await supabase.from("users").update({ name, password_hash: hashedPassword, phone, ...(agentIdForNew ? { agent_id: agentIdForNew } : {}) }).eq("id", existing.id);
         userId = existing.id;
       } else {
         // Create new unverified user
@@ -2885,7 +2935,8 @@ async function startServer() {
           password_hash: hashedPassword,
           phone: phone ? phone.trim() : null,
           is_verified: false,
-          referred_by_id: referredById
+          referred_by_id: referredById,
+          agent_id: agentIdForNew
         }).select("id").single();
         if (error) throw error;
         await supabase.from("user_stats").insert({ user_id: newUser.id });
@@ -3040,7 +3091,7 @@ async function startServer() {
 
   // =================== GOOGLE OAUTH ===================
   app.post("/api/auth/google", authLimiter, async (req, res) => {
-    const { credential, accessToken, name: directName, picture: directPicture, googleTempToken, phone, countryCode } = req.body;
+    const { credential, accessToken, name: directName, picture: directPicture, googleTempToken, phone, countryCode, agentCode } = req.body;
 
     if (!GOOGLE_CLIENT_ID) {
       return res.status(503).json({ error: "تسجيل الدخول عبر Google غير مفعّل" });
@@ -3121,6 +3172,7 @@ async function startServer() {
         existingByEmail = updatedUser;
       } else {
         // Create new user via Google
+        const googleAgentId = agentCode ? await agentCore.resolveAgentIdByCode(agentCode) : null; // [AGENTS]
         const { data: newUser, error: createErr } = await supabase.from("users").insert({
           name: sanitizeText(name, 60),
           email,
@@ -3129,7 +3181,8 @@ async function startServer() {
           is_verified: true,
           avatar_url: avatarUrl,
           phone: fullPhone || null,
-          balance: 0
+          balance: 0,
+          agent_id: googleAgentId
         }).select("*").single();
 
         if (createErr) throw createErr;
@@ -4241,6 +4294,11 @@ async function startServer() {
         } catch (refErr) {
           console.error(`[REFERRAL] فشل حساب/إضافة عمولة الإحالة للطلب #${order.id}:`, refErr);
         }
+      }
+
+      // [AGENTS] عمولة الوكيل = نسبة من صافي ربح المتجر في الطلب (مرة واحدة، تُعكس عند الاسترجاع)
+      if (user.agent_id) {
+        await agentCore.applyAgentCommission({ orderId: order.id, buyerId: userId, agentId: user.agent_id, netProfit: computeOrderNetProfit(product, total, safeQty, snapshotCostPrice) });
       }
 
       // إشعار فوري للمستخدم إذا تم قبول الطلب لحظياً

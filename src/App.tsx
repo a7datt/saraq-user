@@ -135,6 +135,9 @@ import SessionsActivityPage from "./pages/SessionsActivityPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
 import EditProfilePage from "./pages/EditProfilePage";
 import ReferralPage from "./pages/ReferralPage";
+import AgentPage from "./pages/AgentPage";
+import OurAgentsPage from "./pages/OurAgentsPage";
+import { Briefcase, Store as StoreIcon } from "lucide-react";
 import RanksPage from "./pages/RanksPage";
 import AnimatedLogo from "./components/AnimatedLogo";
 import type { MyRankInfo } from "./types";
@@ -565,6 +568,11 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [siteSettings, setSiteSettings] = useState<any[]>([]);
+  // [AGENTS] إعدادات إظهار عناصر الوكلاء
+  const [agentsCfg, setAgentsCfg] = useState<{ enabled: boolean; mode: string; directoryEnabled: boolean }>({ enabled: false, mode: "selected", directoryEnabled: false });
+  useEffect(() => {
+    fetch("/api/agents/config").then(r => r.ok ? r.json() : null).then(d => { if (d) setAgentsCfg({ enabled: !!d.enabled, mode: d.mode || "selected", directoryEnabled: !!d.directoryEnabled }); }).catch(() => {});
+  }, []);
   // نظام الرتب: رتبة المستخدم الحالية + التقدم نحو الرتبة التالية
   const [rankInfo, setRankInfo] = useState<MyRankInfo | null>(null);
   const refreshRank = useCallback(async () => {
@@ -828,6 +836,10 @@ export default function App() {
       url = "/profile/referral";
     } else if (view.type === "identity") {
       url = "/profile/identity";
+    } else if (view.type === "agent") {
+      url = "/profile/agent";
+    } else if (view.type === "our_agents") {
+      url = "/agents";
     } else if (view.type === "ranks") {
       url = "/profile/ranks";
     } else if (view.type === "active_sessions") {
@@ -902,6 +914,10 @@ export default function App() {
         setActiveTab("profile"); setView({ type: "referral" });
       } else if (path === "/profile/identity") {
         setActiveTab("profile"); setView({ type: "identity" });
+      } else if (path === "/profile/agent") {
+        setActiveTab("profile"); setView({ type: "agent" });
+      } else if (path === "/agents") {
+        setActiveTab("profile"); setView({ type: "our_agents" });
       } else if (path === "/profile/ranks") {
         setActiveTab("profile"); setView({ type: "ranks" });
       } else if (path === "/profile/active-sessions") {
@@ -1423,7 +1439,7 @@ export default function App() {
         const res = await fetch('/api/auth/google', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken, googleId: profile.sub, email: profile.email, name: profile.name, picture: profile.picture })
+          body: JSON.stringify({ accessToken, googleId: profile.sub, email: profile.email, name: profile.name, picture: profile.picture, agentCode: localStorage.getItem("agentCode") || undefined })
         });
         const data = await res.json();
         if (res.ok && data.requiresPhone) {
@@ -1466,6 +1482,15 @@ export default function App() {
 
     // Handle referral code from URL
     const urlParams = new URLSearchParams(window.location.search);
+    // [AGENTS] رابط الوكيل (?agent=CODE): يُحفظ ويُفتح التسجيل مباشرة لغير المسجّلين
+    const agentParam = urlParams.get('agent');
+    if (agentParam && /^[A-Za-z0-9]{4,16}$/.test(agentParam)) {
+      try { localStorage.setItem("agentCode", agentParam.toUpperCase()); } catch {}
+      if (!savedUserId) {
+        setActiveTab("profile");
+        setView({ type: "login" });
+      }
+    }
     const ref = urlParams.get('ref');
     if (ref) {
       localStorage.setItem("referralCode", ref);
@@ -2896,6 +2921,12 @@ export default function App() {
                         الآن متتالية مباشرة بلا تقسيمات بصرية. */}
                     <DrawerItem large icon={<span className="text-yellow-500"><Trophy size={18} /></span>}   label="الترتيب" onClick={() => { setActiveTab("profile"); setView({ type: "leaderboard" }); setIsDrawerOpen(false); }} />
                     <DrawerItem large icon={<span className="text-yellow-500"><Gift size={18} /></span>}     label="الإحالة" onClick={() => { setActiveTab("profile"); setView({ type: "referral" }); setIsDrawerOpen(false); }} />
+                    {user && agentsCfg.enabled && (agentsCfg.mode === "all" || (user as any).agent_enabled) && (
+                      <DrawerItem large icon={<span className="text-[var(--brand)]"><Briefcase size={18} /></span>} label="حساب الوكيل" onClick={() => { setActiveTab("profile"); setView({ type: "agent" }); setIsDrawerOpen(false); }} />
+                    )}
+                    {agentsCfg.directoryEnabled && (
+                      <DrawerItem large icon={<span className="text-orange-500"><StoreIcon size={18} /></span>} label="وكلائنا" onClick={() => { setActiveTab("profile"); setView({ type: "our_agents" }); setIsDrawerOpen(false); }} />
+                    )}
                     <DrawerItem large icon={<span className="text-[var(--brand)]"><Award size={18} /></span>} label="الرتب" onClick={() => { setActiveTab("profile"); setView({ type: "ranks" }); setIsDrawerOpen(false); }} />
                     <DrawerItem large icon={<span className="text-green-600"><Key size={18} /></span>} label="API" onClick={() => { setActiveTab("profile"); setView({ type: "user_api" }); setIsDrawerOpen(false); }} />
                     <DrawerItem icon={<span className="text-green-500"><Headphones size={18} /></span>} label="الدعم الفني"  onClick={() => { setActiveTab("profile"); setView({ type: "chat" }); setIsDrawerOpen(false); }} />
@@ -3113,6 +3144,8 @@ export default function App() {
                     {view.type === "profile_forgot_password" && <ForgotPasswordPage setUser={setUser} setView={setView} setActiveTab={setActiveTab} initialEmail={user?.email || ""} lockEmail backView={{ type: "edit_profile" }} />}
                     {view.type === "referral" && <ReferralPage user={user} siteSettings={siteSettings} setView={setView} />}
                     {view.type === "identity" && <IdentityVerificationPage user={user} setView={setView} fetchUser={fetchUser} />}
+                    {view.type === "agent" && (user ? <AgentPage setView={setView} /> : <LoginPage theme={theme} setUser={setUser} setView={setView} setActiveTab={setActiveTab} />)}
+                    {view.type === "our_agents" && <OurAgentsPage setView={setView} />}
                     {view.type === "ranks" && <RanksPage user={user} setView={setView} setActiveTab={setActiveTab} rankInfo={rankInfo} refreshRank={refreshRank} />}
                     {view.type === "privacy_policy" && <PrivacyPolicyPage setView={setView} />}
                     {view.type === "faq" && <FaqPage setView={setView} />}
