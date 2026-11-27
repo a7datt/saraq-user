@@ -4345,6 +4345,7 @@ async function startServer() {
         `👤 العميل: ${user.name}`,
         `🔢 رقم الدخول: #${user.id}`,
         `📦 المنتج: ${product.name} (#${product.id})`,
+        `🔢 الكمية: ${safeQty}`,
         `💵 الإجمالي: ${total}`,
         `📌 الحالة: ${initialStatus === 'pending_admin' ? '⏳ قيد المراجعة' : orderTypeLabelUser}`,
         `🗓️ التاريخ: ${orderDateStrUser}`,
