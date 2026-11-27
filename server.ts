@@ -1167,6 +1167,18 @@ function buildMegaApiOrderFields(product: any, extraData: any): Record<string, s
   return result;
 }
 
+// [ORDER-FIX] تصنيف خطأ المزود عند إنشاء الطلب: أخطاء بيانات العميل (Player ID/الكمية) تُرفض فوراً ويُعاد
+// الرصيد، أما أي خطأ من جهة المزود (رصيد API غير كافٍ، صيانة، توكن، اتصال، رد غير مفهوم) فيُحوَّل الطلب إلى
+// "معلّق" بانتظار الأدمن مع حفظ السبب الدقيق — ولا يُعرض للعميل أي تفاصيل عن رصيدنا لدى المزود.
+function isCustomerInputProviderError(code: any, msg: any): boolean {
+  const c = Number(code);
+  if ([105, 106, 112, 113, 114].includes(c)) return true;
+  if (c) return false;
+  const m = String(msg || "");
+  if (/رصيد|balance|insufficient|fund|كاف|صيانة|maintenance|token|توكن|\bip\b|timeout|مهلة|network|اتصال|server|خادم|unavailable|غير متاح/i.test(m)) return false;
+  return /player|معرف|اللاعب|ايدي|آيدي|\bid\b|account|الحساب|invalid|غير صالح|غير صحيح|الكمية|quantity|\bqty\b/i.test(m);
+}
+
 async function megaApiCreateOrder(
   base_url: string, api_token: string, productId: string, qty: number,
   orderFields: Record<string, string>, orderUuid: string
@@ -4118,9 +4130,14 @@ async function startServer() {
           if (isMegaError) {
             const errMsg = megaRes?.message || "فشل الطلب لدى المورد";
             console.error(`[PROVIDER:${provider.name}] (megaapi) Order failed:`, JSON.stringify(megaRes));
-            await refundReservedBalance();
-            return { ok: false, statusCode: 400, error: `فشل الطلب: ${errMsg}`, details: megaRes };
+            if (isCustomerInputProviderError(0, errMsg)) {
+              await refundReservedBalance();
+              return { ok: false, statusCode: 400, error: `فشل الطلب: ${errMsg}`, details: megaRes };
+            }
+            providerOrderFailed = true;
+            providerFailReason = errMsg;
           }
+          if (!providerOrderFailed) {
           if (isMegaDuplicate) {
             console.warn(`[PROVIDER:${provider.name}] (megaapi) Duplicate order UUID=${ahminixOrderUuid} — treating as success`);
           }
@@ -4128,6 +4145,7 @@ async function startServer() {
           ahminixOrderStatus = megaRes.data?.status || "processing";
           ahminixReplayApi   = [];
           console.log(`[PROVIDER:${provider.name}] (megaapi) Order created: id=${ahminixOrderId}, uuid=${ahminixOrderUuid}, status=${ahminixOrderStatus}`);
+          }
         } else {
           const ahminixRes = await providerCreateOrder(
             provider.base_url,
@@ -4158,7 +4176,7 @@ async function startServer() {
             const code = ahminixRes?.code || ahminixRes?.error_code;
             const errMsg = (code && errorCodes[code]) || ahminixRes?.message || ahminixRes?.error || "فشل الطلب لدى المورد";
             console.error(`[PROVIDER:${provider.name}] Order failed:`, JSON.stringify(ahminixRes));
-            if (code === 100) {
+            if (!isCustomerInputProviderError(code, errMsg)) {
               providerOrderFailed = true;
               providerFailReason = errMsg;
             } else {
@@ -4349,7 +4367,7 @@ async function startServer() {
           status: initialStatus,
           price: total,
           productName: product.name,
-          ...(providerOrderFailed ? { providerFailed: true, providerFailReason } : {}),
+          ...(providerOrderFailed ? { providerFailed: true } : {}),
           ...(ahminixOrderId ? {
             externalOrderId: ahminixOrderId,
             externalStatus: ahminixOrderStatus,
