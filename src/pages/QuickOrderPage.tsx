@@ -1,4 +1,5 @@
 import { useProductDiscounts } from "../utils/useProductDiscounts";
+import DiscountSummary from "../components/DiscountSummary";
 import React, { useState } from "react";
 import { ArrowRight, ChevronDown, Star } from "lucide-react";
 import { UserData } from "../types";
@@ -245,12 +246,7 @@ const QuickOrderPage = ({
           )}
 
           {vipDiscountPct > 0 && (
-            <div className="w-full mt-3 flex items-center justify-between text-xs bg-amber-500/10 border border-amber-500/20 rounded-2xl px-3.5 py-2.5">
-              <div className="flex items-center gap-1.5 text-amber-500 font-bold">
-                <Star size={12} fill="currentColor" /> خصمك ({+quotedPct.toFixed(2)}%)
-              </div>
-              <span className="text-amber-500 font-bold">- {fmtPrice(baseTotal * vipDiscountPct)}</span>
-            </div>
+            <DiscountSummary baseTotal={baseTotal} finalPrice={finalPrice} percent={quotedPct} isVip={!!user?.is_vip} fmtPrice={fmtPrice} textClass={ui.text} mutedClass={ui.muted} />
           )}
 
           {/* ===== خانات الطلب (باقة/حقول) ===== */}
