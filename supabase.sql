@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Schema كامل لقاعدة بيانات "سراقب ستور" (saraqib-user + saraqib-admin)
 -- مُستخرج مباشرة من مشروع Supabase الحيّ (atjoruolwhlsnhlwejkb) عبر MCP
--- بتاريخ: 2026-11-02
+-- بتاريخ: 2026-11-02 (+ تحديثات القسم 14 حتى 2026-11-27 من المشروع yyhmxfsxqdiwdswnmair)
 -- الاستخدام: نفّذ هذا الملف كاملاً على مشروع Supabase جديد (SQL Editor)
 --           لإنشاء نفس بنية قاعدة البيانات لمشروع مستنسخ.
 -- ملاحظة: لا يحتوي بيانات (rows) — بنية فقط (DDL): جداول/قيود/فهارس/
@@ -1579,6 +1579,447 @@ CREATE POLICY allow_all_user_stats ON public.user_stats AS PERMISSIVE FOR ALL TO
 CREATE POLICY allow_all_users ON public.users AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY allow_all_voucher_uses ON public.voucher_uses AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY allow_all_vouchers ON public.vouchers AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- =====================================================================
+-- 14) تحديثات لاحقة (مُطابقة لقاعدة البيانات الحيّة yyhmxfsxqdiwdswnmair بتاريخ 2026-11-27)
+--     كل ما أُضيف/تغيّر بعد الاستخراج الأصلي أعلاه: الرتب وقواعد الخصم، توثيق الهوية،
+--     نظام الوكلاء، أعمدة QR لطرق الدفع، حالة مزامنة المزوّدين، الشريط المتحرك،
+--     وأحدث نسخة من refund_order_once وقيد حالات فواتير الدفع.
+--     كل الأوامر هنا قابلة لإعادة التنفيذ (IF NOT EXISTS / DROP IF EXISTS ثم إنشاء)،
+--     فيمكن تشغيلها أيضاً على قاعدة قديمة أُنشئت من نسخة سابقة من هذا الملف لتحديثها.
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- 14.1) Sequences جديدة
+-- ---------------------------------------------------------------------
+CREATE SEQUENCE IF NOT EXISTS public.agent_commissions_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807;
+CREATE SEQUENCE IF NOT EXISTS public.agents_directory_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807;
+CREATE SEQUENCE IF NOT EXISTS public.discount_rules_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807;
+CREATE SEQUENCE IF NOT EXISTS public.identity_verifications_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807;
+CREATE SEQUENCE IF NOT EXISTS public.rank_categories_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807;
+CREATE SEQUENCE IF NOT EXISTS public.ranks_id_seq START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807;
+
+-- ---------------------------------------------------------------------
+-- 14.2) جداول جديدة
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.agent_commissions (
+  id bigint DEFAULT nextval('agent_commissions_id_seq'::regclass) NOT NULL,
+  agent_id bigint NOT NULL,
+  user_id bigint,
+  order_id bigint NOT NULL,
+  amount numeric NOT NULL,
+  net_profit numeric DEFAULT 0 NOT NULL,
+  percent numeric DEFAULT 0 NOT NULL,
+  reversed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.agents_directory (
+  id bigint DEFAULT nextval('agents_directory_id_seq'::regclass) NOT NULL,
+  name text NOT NULL,
+  image_url text,
+  website_url text,
+  phone text,
+  location text,
+  description text,
+  is_active boolean DEFAULT true NOT NULL,
+  sort_order integer DEFAULT 0 NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.discount_rules (
+  id bigint DEFAULT nextval('discount_rules_id_seq'::regclass) NOT NULL,
+  owner_type text NOT NULL,
+  owner_id bigint,
+  scope_type text NOT NULL,
+  scope_id bigint,
+  percent numeric(7,3) NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.identity_verifications (
+  id bigint DEFAULT nextval('identity_verifications_id_seq'::regclass) NOT NULL,
+  user_id bigint NOT NULL,
+  status text DEFAULT 'pending'::text NOT NULL,
+  front_path text NOT NULL,
+  back_path text NOT NULL,
+  reject_reason text,
+  reviewed_by text,
+  reviewed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.rank_categories (
+  id bigint DEFAULT nextval('rank_categories_id_seq'::regclass) NOT NULL,
+  rank_id bigint NOT NULL,
+  category_type text NOT NULL,
+  category_id bigint NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.ranks (
+  id bigint DEFAULT nextval('ranks_id_seq'::regclass) NOT NULL,
+  name text NOT NULL,
+  image_url text DEFAULT ''::text NOT NULL,
+  color text DEFAULT '#e11d48'::text NOT NULL,
+  required_amount numeric DEFAULT 0 NOT NULL,
+  has_discount boolean DEFAULT false NOT NULL,
+  discount_percent numeric DEFAULT 0 NOT NULL,
+  description text DEFAULT ''::text NOT NULL,
+  benefits text DEFAULT ''::text NOT NULL,
+  is_active boolean DEFAULT true NOT NULL,
+  sort_order integer DEFAULT 0 NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+-- ---------------------------------------------------------------------
+-- 14.3) أعمدة جديدة على جداول موجودة
+-- ---------------------------------------------------------------------
+ALTER TABLE public.payment_methods ADD COLUMN IF NOT EXISTS qr_image_url text;
+ALTER TABLE public.payment_methods ADD COLUMN IF NOT EXISTS qr_mode text DEFAULT 'auto'::text NOT NULL;
+ALTER TABLE public.payment_methods ADD COLUMN IF NOT EXISTS requires_identity boolean DEFAULT false NOT NULL;
+ALTER TABLE public.providers ADD COLUMN IF NOT EXISTS last_sync_at timestamp with time zone;
+ALTER TABLE public.providers ADD COLUMN IF NOT EXISTS last_sync_message text;
+ALTER TABLE public.providers ADD COLUMN IF NOT EXISTS last_sync_status text;
+ALTER TABLE public.store_appearance ADD COLUMN IF NOT EXISTS marquee_enabled boolean DEFAULT false NOT NULL;
+ALTER TABLE public.store_appearance ADD COLUMN IF NOT EXISTS marquee_text text DEFAULT ''::text NOT NULL;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS agent_code text;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS agent_commission_percent numeric;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS agent_enabled boolean DEFAULT false NOT NULL;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS agent_id bigint;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS identity_verified boolean DEFAULT false NOT NULL;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS manual_rank_id bigint;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS rank_id bigint;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS rank_updated_at timestamp with time zone;
+
+-- ---------------------------------------------------------------------
+-- 14.4) دوال جديدة/مُحدّثة
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.add_recharge_sum(p_user_id bigint, p_amount numeric)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  insert into public.user_stats (user_id, total_recharge_sum)
+  values (p_user_id, greatest(coalesce(p_amount, 0), 0))
+  on conflict (user_id) do update
+    set total_recharge_sum = coalesce(public.user_stats.total_recharge_sum, 0) + greatest(coalesce(p_amount, 0), 0),
+        updated_at = now();
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.apply_agent_commission(p_order_id bigint, p_agent_id bigint, p_user_id bigint, p_amount numeric, p_net_profit numeric, p_percent numeric)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_id bigint;
+BEGIN
+  IF p_amount IS NULL OR p_amount <= 0 OR p_agent_id IS NULL OR p_agent_id = p_user_id THEN RETURN false; END IF;
+  INSERT INTO public.agent_commissions (agent_id, user_id, order_id, amount, net_profit, percent)
+  VALUES (p_agent_id, p_user_id, p_order_id, p_amount, COALESCE(p_net_profit,0), COALESCE(p_percent,0))
+  ON CONFLICT (order_id) DO NOTHING RETURNING id INTO v_id;
+  IF v_id IS NULL THEN RETURN false; END IF;
+  UPDATE public.users SET balance = balance + p_amount, updated_at = now() WHERE id = p_agent_id;
+  INSERT INTO public.transactions (user_id, amount, note, status)
+  VALUES (p_agent_id, p_amount, 'عمولة وكيل (' || trim(to_char(p_percent, 'FM999990.##')) || '% من صافي ربح الطلب #' || p_order_id || ')', 'approved');
+  RETURN true;
+END; $function$;
+
+CREATE OR REPLACE FUNCTION public.cleanup_user_discount_rules()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  DELETE FROM public.discount_rules WHERE owner_type IN ('api_user','user') AND owner_id = OLD.id;
+  RETURN OLD;
+END; $function$;
+
+CREATE OR REPLACE FUNCTION public.recalc_all_user_ranks()
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  r record;
+  n integer := 0;
+begin
+  for r in select id from public.users loop
+    perform public.recalc_user_rank(r.id);
+    n := n + 1;
+  end loop;
+  return n;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.recalc_user_rank(p_user_id bigint)
+ RETURNS bigint
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_total numeric := 0;
+  v_auto bigint;
+  v_auto_order integer;
+  v_manual bigint;
+  v_manual_order integer;
+  v_final bigint;
+begin
+  select coalesce(total_recharge_sum, 0) into v_total from public.user_stats where user_id = p_user_id;
+  v_total := coalesce(v_total, 0);
+
+  select id, sort_order into v_auto, v_auto_order
+  from public.ranks
+  where is_active and required_amount <= v_total
+  order by required_amount desc, sort_order desc
+  limit 1;
+
+  select u.manual_rank_id, r.sort_order into v_manual, v_manual_order
+  from public.users u
+  left join public.ranks r on r.id = u.manual_rank_id and r.is_active
+  where u.id = p_user_id;
+
+  if v_manual is not null and v_manual_order is not null
+     and (v_auto is null or v_manual_order >= coalesce(v_auto_order, 0)) then
+    v_final := v_manual;
+  else
+    v_final := v_auto;
+  end if;
+
+  update public.users
+  set rank_id = v_final, rank_updated_at = now()
+  where id = p_user_id and rank_id is distinct from v_final;
+
+  return v_final;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.refund_order_once(p_order_id bigint)
+ RETURNS TABLE(refunded boolean, amount numeric, new_balance numeric)
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_total       numeric;
+  v_user_id     bigint;
+  v_refunded_at timestamptz;
+  v_meta        text;
+  v_meta_j      jsonb;
+  v_new_balance numeric;
+  v_ac          record;
+BEGIN
+  SELECT o.total_amount, o.user_id, o.refunded_at, o.meta
+    INTO v_total, v_user_id, v_refunded_at, v_meta
+    FROM public.orders o
+   WHERE o.id = p_order_id
+     FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 0::numeric, NULL::numeric; RETURN;
+  END IF;
+
+  IF v_refunded_at IS NOT NULL THEN
+    RETURN QUERY SELECT false, 0::numeric, NULL::numeric; RETURN;
+  END IF;
+
+  IF v_total IS NULL OR v_total <= 0 OR v_user_id IS NULL THEN
+    UPDATE public.orders SET refunded_at = now() WHERE id = p_order_id;
+    RETURN QUERY SELECT false, 0::numeric, NULL::numeric; RETURN;
+  END IF;
+
+  BEGIN
+    v_meta_j := COALESCE(v_meta::jsonb, '{}'::jsonb);
+  EXCEPTION WHEN others THEN
+    v_meta_j := '{}'::jsonb;
+  END;
+  v_meta_j := jsonb_set(v_meta_j, '{refunded}', 'true'::jsonb, true);
+  v_meta_j := jsonb_set(v_meta_j, '{refunded_at}', to_jsonb(now()::text), true);
+
+  UPDATE public.orders
+     SET refunded_at = now(),
+         meta        = v_meta_j::text,
+         updated_at  = now()
+   WHERE id = p_order_id;
+
+  UPDATE public.users
+     SET balance = balance + v_total,
+         updated_at = now()
+   WHERE id = v_user_id
+   RETURNING balance INTO v_new_balance;
+
+  INSERT INTO public.transactions (user_id, amount, note, status)
+  VALUES (v_user_id, v_total, 'استرجاع رصيد - إلغاء طلب #' || p_order_id, 'approved');
+
+  -- عكس عمولة الوكيل (إن وُجدت ولم تُعكس بعد)
+  UPDATE public.agent_commissions ac SET reversed_at = now()
+   WHERE ac.order_id = p_order_id AND ac.reversed_at IS NULL
+   RETURNING ac.agent_id, ac.amount INTO v_ac;
+  IF v_ac.agent_id IS NOT NULL THEN
+    UPDATE public.users SET balance = balance - v_ac.amount, updated_at = now() WHERE id = v_ac.agent_id;
+    INSERT INTO public.transactions (user_id, amount, note, status)
+    VALUES (v_ac.agent_id, -v_ac.amount, 'عكس عمولة وكيل - إلغاء الطلب #' || p_order_id, 'approved');
+  END IF;
+
+  RETURN QUERY SELECT true, v_total, v_new_balance;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.trg_user_stats_recalc_rank()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if tg_op = 'INSERT' or new.total_recharge_sum is distinct from old.total_recharge_sum then
+    perform public.recalc_user_rank(new.user_id);
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.trg_users_recalc_rank()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if tg_op = 'INSERT' or new.manual_rank_id is distinct from old.manual_rank_id then
+    perform public.recalc_user_rank(new.id);
+  end if;
+  return null;
+end;
+$function$;
+
+
+-- ---------------------------------------------------------------------
+-- 14.5) Primary Keys
+-- ---------------------------------------------------------------------
+ALTER TABLE ONLY public.agent_commissions DROP CONSTRAINT IF EXISTS agent_commissions_pkey;
+ALTER TABLE ONLY public.agent_commissions ADD CONSTRAINT agent_commissions_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.agents_directory DROP CONSTRAINT IF EXISTS agents_directory_pkey;
+ALTER TABLE ONLY public.agents_directory ADD CONSTRAINT agents_directory_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.discount_rules DROP CONSTRAINT IF EXISTS discount_rules_pkey;
+ALTER TABLE ONLY public.discount_rules ADD CONSTRAINT discount_rules_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.identity_verifications DROP CONSTRAINT IF EXISTS identity_verifications_pkey;
+ALTER TABLE ONLY public.identity_verifications ADD CONSTRAINT identity_verifications_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.rank_categories DROP CONSTRAINT IF EXISTS rank_categories_pkey;
+ALTER TABLE ONLY public.rank_categories ADD CONSTRAINT rank_categories_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.ranks DROP CONSTRAINT IF EXISTS ranks_pkey;
+ALTER TABLE ONLY public.ranks ADD CONSTRAINT ranks_pkey PRIMARY KEY (id);
+
+-- ---------------------------------------------------------------------
+-- 14.6) Unique Constraints
+-- ---------------------------------------------------------------------
+ALTER TABLE ONLY public.agent_commissions DROP CONSTRAINT IF EXISTS agent_commissions_order_id_key;
+ALTER TABLE ONLY public.agent_commissions ADD CONSTRAINT agent_commissions_order_id_key UNIQUE (order_id);
+ALTER TABLE ONLY public.rank_categories DROP CONSTRAINT IF EXISTS rank_categories_rank_id_category_type_category_id_key;
+ALTER TABLE ONLY public.rank_categories ADD CONSTRAINT rank_categories_rank_id_category_type_category_id_key UNIQUE (rank_id, category_type, category_id);
+
+-- ---------------------------------------------------------------------
+-- 14.7) Check Constraints (جديدة/مُحدّثة)
+-- ---------------------------------------------------------------------
+ALTER TABLE ONLY public.agent_commissions DROP CONSTRAINT IF EXISTS agent_commissions_amount_check;
+ALTER TABLE ONLY public.agent_commissions ADD CONSTRAINT agent_commissions_amount_check CHECK ((amount > (0)::numeric));
+ALTER TABLE ONLY public.discount_rules DROP CONSTRAINT IF EXISTS discount_rules_check;
+ALTER TABLE ONLY public.discount_rules ADD CONSTRAINT discount_rules_check CHECK ((((scope_type = 'all'::text) AND (scope_id IS NULL)) OR ((scope_type <> 'all'::text) AND (scope_id IS NOT NULL))));
+ALTER TABLE ONLY public.discount_rules DROP CONSTRAINT IF EXISTS discount_rules_check1;
+ALTER TABLE ONLY public.discount_rules ADD CONSTRAINT discount_rules_check1 CHECK ((((owner_type = ANY (ARRAY['rank'::text, 'api_user'::text, 'user'::text])) AND (owner_id IS NOT NULL)) OR ((owner_type = ANY (ARRAY['vip'::text, 'api_global'::text])) AND (owner_id IS NULL))));
+ALTER TABLE ONLY public.discount_rules DROP CONSTRAINT IF EXISTS discount_rules_owner_type_check;
+ALTER TABLE ONLY public.discount_rules ADD CONSTRAINT discount_rules_owner_type_check CHECK ((owner_type = ANY (ARRAY['rank'::text, 'vip'::text, 'api_global'::text, 'api_user'::text, 'user'::text])));
+ALTER TABLE ONLY public.discount_rules DROP CONSTRAINT IF EXISTS discount_rules_percent_check;
+ALTER TABLE ONLY public.discount_rules ADD CONSTRAINT discount_rules_percent_check CHECK (((percent >= (0)::numeric) AND (percent < (100)::numeric)));
+ALTER TABLE ONLY public.discount_rules DROP CONSTRAINT IF EXISTS discount_rules_scope_type_check;
+ALTER TABLE ONLY public.discount_rules ADD CONSTRAINT discount_rules_scope_type_check CHECK ((scope_type = ANY (ARRAY['all'::text, 'category'::text, 'subcategory'::text, 'sub_sub_category'::text, 'product'::text])));
+ALTER TABLE ONLY public.identity_verifications DROP CONSTRAINT IF EXISTS identity_verifications_status_check;
+ALTER TABLE ONLY public.identity_verifications ADD CONSTRAINT identity_verifications_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])));
+ALTER TABLE ONLY public.payment_methods DROP CONSTRAINT IF EXISTS payment_methods_qr_mode_check;
+ALTER TABLE ONLY public.payment_methods ADD CONSTRAINT payment_methods_qr_mode_check CHECK ((qr_mode = ANY (ARRAY['auto'::text, 'image'::text])));
+ALTER TABLE ONLY public.rank_categories DROP CONSTRAINT IF EXISTS rank_categories_category_type_check;
+ALTER TABLE ONLY public.rank_categories ADD CONSTRAINT rank_categories_category_type_check CHECK ((category_type = ANY (ARRAY['category'::text, 'subcategory'::text])));
+ALTER TABLE ONLY public.shamcash_invoices DROP CONSTRAINT IF EXISTS shamcash_invoices_status_check;
+ALTER TABLE ONLY public.shamcash_invoices ADD CONSTRAINT shamcash_invoices_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'paid'::text, 'expired'::text, 'cancelled'::text, 'rejected'::text])));
+ALTER TABLE ONLY public.users DROP CONSTRAINT IF EXISTS users_agent_commission_percent_check;
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_agent_commission_percent_check CHECK (((agent_commission_percent IS NULL) OR ((agent_commission_percent >= (0)::numeric) AND (agent_commission_percent <= (100)::numeric))));
+
+-- ---------------------------------------------------------------------
+-- 14.8) Foreign Keys
+-- ---------------------------------------------------------------------
+ALTER TABLE ONLY public.agent_commissions DROP CONSTRAINT IF EXISTS agent_commissions_agent_id_fkey;
+ALTER TABLE ONLY public.agent_commissions ADD CONSTRAINT agent_commissions_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_commissions DROP CONSTRAINT IF EXISTS agent_commissions_user_id_fkey;
+ALTER TABLE ONLY public.agent_commissions ADD CONSTRAINT agent_commissions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.rank_categories DROP CONSTRAINT IF EXISTS rank_categories_rank_id_fkey;
+ALTER TABLE ONLY public.rank_categories ADD CONSTRAINT rank_categories_rank_id_fkey FOREIGN KEY (rank_id) REFERENCES ranks(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.users DROP CONSTRAINT IF EXISTS users_agent_id_fkey;
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.users DROP CONSTRAINT IF EXISTS users_manual_rank_id_fkey;
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_manual_rank_id_fkey FOREIGN KEY (manual_rank_id) REFERENCES ranks(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.users DROP CONSTRAINT IF EXISTS users_rank_id_fkey;
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_rank_id_fkey FOREIGN KEY (rank_id) REFERENCES ranks(id) ON DELETE SET NULL;
+
+-- ---------------------------------------------------------------------
+-- 14.9) Triggers جديدة
+-- ---------------------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_cleanup_user_discount_rules ON public.users;
+CREATE TRIGGER trg_cleanup_user_discount_rules AFTER DELETE ON public.users FOR EACH ROW EXECUTE FUNCTION cleanup_user_discount_rules();
+DROP TRIGGER IF EXISTS user_stats_recalc_rank ON public.user_stats;
+CREATE TRIGGER user_stats_recalc_rank AFTER INSERT OR UPDATE OF total_recharge_sum ON public.user_stats FOR EACH ROW EXECUTE FUNCTION trg_user_stats_recalc_rank();
+DROP TRIGGER IF EXISTS users_recalc_rank ON public.users;
+CREATE TRIGGER users_recalc_rank AFTER INSERT OR UPDATE OF manual_rank_id ON public.users FOR EACH ROW EXECUTE FUNCTION trg_users_recalc_rank();
+
+-- ---------------------------------------------------------------------
+-- 14.10) فهارس جديدة
+-- ---------------------------------------------------------------------
+DROP INDEX IF EXISTS public.agent_commissions_agent_idx;
+CREATE INDEX agent_commissions_agent_idx ON public.agent_commissions USING btree (agent_id, created_at DESC);
+DROP INDEX IF EXISTS public.agent_commissions_user_idx;
+CREATE INDEX agent_commissions_user_idx ON public.agent_commissions USING btree (user_id);
+DROP INDEX IF EXISTS public.discount_rules_owner_idx;
+CREATE INDEX discount_rules_owner_idx ON public.discount_rules USING btree (owner_type, owner_id);
+DROP INDEX IF EXISTS public.discount_rules_unique_idx;
+CREATE UNIQUE INDEX discount_rules_unique_idx ON public.discount_rules USING btree (owner_type, COALESCE(owner_id, (0)::bigint), scope_type, COALESCE(scope_id, (0)::bigint));
+DROP INDEX IF EXISTS public.identity_verifications_one_pending_idx;
+CREATE UNIQUE INDEX identity_verifications_one_pending_idx ON public.identity_verifications USING btree (user_id) WHERE (status = 'pending'::text);
+DROP INDEX IF EXISTS public.identity_verifications_status_idx;
+CREATE INDEX identity_verifications_status_idx ON public.identity_verifications USING btree (status, created_at);
+DROP INDEX IF EXISTS public.identity_verifications_user_idx;
+CREATE INDEX identity_verifications_user_idx ON public.identity_verifications USING btree (user_id, created_at DESC);
+DROP INDEX IF EXISTS public.idx_products_category_order;
+CREATE INDEX idx_products_category_order ON public.products USING btree (category_id, order_index, id);
+DROP INDEX IF EXISTS public.idx_products_provider_external;
+CREATE INDEX idx_products_provider_external ON public.products USING btree (provider_id, external_id);
+DROP INDEX IF EXISTS public.idx_products_subcat_order;
+CREATE INDEX idx_products_subcat_order ON public.products USING btree (subcategory_id, order_index, id);
+DROP INDEX IF EXISTS public.rank_categories_rank_id_idx;
+CREATE INDEX rank_categories_rank_id_idx ON public.rank_categories USING btree (rank_id);
+DROP INDEX IF EXISTS public.users_agent_code_uidx;
+CREATE UNIQUE INDEX users_agent_code_uidx ON public.users USING btree (upper(agent_code)) WHERE (agent_code IS NOT NULL);
+DROP INDEX IF EXISTS public.users_agent_enabled_idx;
+CREATE INDEX users_agent_enabled_idx ON public.users USING btree (agent_enabled) WHERE agent_enabled;
+DROP INDEX IF EXISTS public.users_agent_id_idx;
+CREATE INDEX users_agent_id_idx ON public.users USING btree (agent_id) WHERE (agent_id IS NOT NULL);
+DROP INDEX IF EXISTS public.users_rank_id_idx;
+CREATE INDEX users_rank_id_idx ON public.users USING btree (rank_id);
+
+-- ---------------------------------------------------------------------
+-- 14.11) تفعيل RLS على الجداول الجديدة
+-- ---------------------------------------------------------------------
+ALTER TABLE public.agent_commissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agents_directory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.discount_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.identity_verifications ENABLE ROW LEVEL SECURITY;
 
 -- =====================================================================
 -- نهاية الملف — 46 جدول + 5 دوال مساعدة + 4 Materialized Views + RLS كاملة
