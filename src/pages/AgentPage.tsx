@@ -27,14 +27,17 @@ const money = (n: number) => `${(Math.round((Number(n) || 0) * 100) / 100).toLoc
 export default function AgentPage({ setView }: Props) {
   const [info, setInfo] = useState<AgentInfo | null>(null);
   const [q, setQ] = useState("");
+  const [botUser, setBotUser] = useState("");
 
   useEffect(() => {
     fetch("/api/agent/me", { headers: authHeader() })
       .then(r => r.json()).then(setInfo)
       .catch(() => setInfo({ system_enabled: false, is_agent: false }));
+    fetch("/api/telegram-bot/user-status").then(r => r.json()).then(d => { if (d?.available && /^[A-Za-z0-9_]{3,64}$/.test(d.bot_username || "")) setBotUser(d.bot_username); }).catch(() => {});
   }, []);
 
   const link = info?.code ? `${window.location.origin}/?agent=${info.code}` : "";
+  const tgLink = info?.code && botUser ? `https://t.me/${botUser}?start=agent_${info.code}` : "";
   const copy = (text: string, msg: string) => {
     navigator.clipboard.writeText(text).then(() => showToast(msg, "success")).catch(() => showToast("تعذّر النسخ", "error"));
   };
@@ -78,12 +81,21 @@ export default function AgentPage({ setView }: Props) {
                   <button onClick={share} className="p-2.5 rounded-lg bg-gray-100 text-gray-600 active:scale-95" aria-label="مشاركة"><Share2 size={16} /></button>
                 </div>
               </div>
+              {tgLink && (
+                <div>
+                  <p className="text-xs font-bold text-gray-500 mb-1.5">رابط الوكيل في بوت تيليجرام</p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0 bg-gray-50 rounded-lg px-3 py-2.5 text-xs font-mono text-gray-700 truncate" dir="ltr">{tgLink}</div>
+                    <button onClick={() => copy(tgLink, "تم نسخ رابط البوت")} className="p-2.5 rounded-lg bg-sky-500 text-white active:scale-95" aria-label="نسخ رابط البوت"><Copy size={16} /></button>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5">
                 <span className="text-xs font-bold text-gray-500">كود الوكيل</span>
                 <button onClick={() => copy(info.code || "", "تم نسخ كود الوكيل")} className="flex items-center gap-1.5 font-mono font-black text-brand tracking-widest">{info.code} <Copy size={13} /></button>
               </div>
               <p className="text-[12px] leading-relaxed text-gray-500">
-                كل من ينشئ حساباً جديداً عبر رابطك أو يكتب كودك أثناء التسجيل يُضاف إلى عملائك. تربح <b className="text-gray-700">{info.percent}%</b> من صافي ربح المتجر في كل عملية شراء يقوم بها عملاؤك (وليس من الشحن)، وتُضاف العمولة إلى رصيدك تلقائياً.
+                كل من ينشئ حساباً جديداً عبر رابطك (في الموقع أو بوت تيليجرام) أو يكتب كودك أثناء التسجيل يُضاف إلى عملائك. تربح <b className="text-gray-700">{info.percent}%</b> من صافي ربح المتجر في كل عملية شراء يقوم بها عملاؤك (وليس من الشحن)، وتُضاف العمولة إلى رصيدك تلقائياً.
               </p>
             </div>
 
