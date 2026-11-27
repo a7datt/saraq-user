@@ -1803,29 +1803,33 @@ async function startServer() {
     return Number.isFinite(v) && v > 0 && v < 100 ? v : 0;
   };
 
-  // [PHASE-2] خصم الـ API لكل منتج: نسبة التوكن المخصصة (custom_discount_percent) إن وُجدت تُطبَّق على كل
-  // المنتجات (مع حماية التكلفة)، وإلا تُطبَّق قواعد api_global — القاعدة الأدق فقط.
+  // [PHASE-2+] خصم الـ API لكل منتج: قواعد المستخدم صاحب التوكن (api_user) تتفوّق إن انطبقت قاعدة منها على المنتج،
+  // وإلا قواعد api_global — القاعدة الأدق فقط، مع حماية التكلفة. (النسبة المسطّحة القديمة للتوكن تبقى احتياطاً للتوافق.)
   const getApiDiscountResolver = async (tokenId: number | string | null | undefined): Promise<(product: any) => number> => {
     let custom: number | null = null;
+    let userRules: any[] = [];
     if (tokenId != null) {
       try {
         const { data: tokenRow, error } = await supabase
-          .from("api_tokens").select("custom_discount_percent").eq("id", tokenId).maybeSingle();
-        if (!error && tokenRow && tokenRow.custom_discount_percent !== null && tokenRow.custom_discount_percent !== undefined) {
-          const c = Number(tokenRow.custom_discount_percent);
-          if (Number.isFinite(c) && c >= 0 && c < 100) custom = c;
+          .from("api_tokens").select("user_id, custom_discount_percent").eq("id", tokenId).maybeSingle();
+        if (!error && tokenRow) {
+          if (tokenRow.user_id != null) userRules = await loadDiscountRules(supabase, "api_user", tokenRow.user_id);
+          if (tokenRow.custom_discount_percent !== null && tokenRow.custom_discount_percent !== undefined) {
+            const c = Number(tokenRow.custom_discount_percent);
+            if (Number.isFinite(c) && c >= 0 && c < 100) custom = c;
+          }
         }
-      } catch { /* العمود قد لا يكون موجوداً بعد */ }
+      } catch { /* تجاهل */ }
     }
-    if (custom !== null) {
-      const flat = custom;
-      return (product: any) => {
+    const globalRules = await loadDiscountRules(supabase, "api_global", null);
+    return (product: any) => {
+      if (pickMostSpecificRule(userRules, product)) return resolveDiscountPercent(userRules, product).percent;
+      if (custom !== null) {
         const cap = maxDiscountPercentForCost(product);
-        return cap !== null && flat > cap ? cap : flat;
-      };
-    }
-    const rules = await loadDiscountRules(supabase, "api_global", null);
-    return (product: any) => resolveDiscountPercent(rules, product).percent;
+        return cap !== null && custom > cap ? cap : custom;
+      }
+      return resolveDiscountPercent(globalRules, product).percent;
+    };
   };
   const getApiDiscountPercentForProduct = async (tokenId: number | string | null | undefined, product: any): Promise<number> =>
     (await getApiDiscountResolver(tokenId))(product);
@@ -1992,11 +1996,13 @@ async function startServer() {
         const { data: rk } = await supabase.from("ranks").select("has_discount, is_active").eq("id", user.rank_id).maybeSingle();
         if (rk && rk.is_active && rk.has_discount) rankRules = await loadDiscountRules(supabase, "rank", user.rank_id);
       }
+      const userStoreRules = await loadDiscountRules(supabase, "user", userId); // [USER-RULES]
       const out: Record<string, number> = {};
       for (const p of (products || [])) {
         let pct = Math.max(
           user.is_vip ? resolveDiscountPercent(vipRules, p).percent : 0,
-          resolveDiscountPercent(rankRules, p).percent
+          resolveDiscountPercent(rankRules, p).percent,
+          resolveDiscountPercent(userStoreRules, p).percent
         );
         if (stats) {
           if (stats.lifetime_discount > 0) pct = Math.max(pct, Number(stats.lifetime_discount));
@@ -4015,6 +4021,9 @@ async function startServer() {
       // خصم رتبة المستخدم (نظام الرتب) — يُطبَّق على المشتريات ويُؤخذ الأعلى بين الخصومات
       const rankDiscount = await getRankDiscountPercent((user as any).rank_id, product);
       if (rankDiscount > 0) discountPercent = Math.max(discountPercent, rankDiscount);
+      // [USER-RULES] قواعد خصم المتجر الخاصة بهذا المستخدم (من صفحة المستخدم) — الأعلى بين مصادر الخصم
+      const userStorePct = resolveDiscountPercent(await loadDiscountRules(supabase, "user", userId), product).percent;
+      if (userStorePct > 0) discountPercent = Math.max(discountPercent, userStorePct);
 
       if (stats) {
         // خصم مدى الحياة (الهدف 6: 3%، الهدف 7: 5%)
