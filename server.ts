@@ -1938,12 +1938,12 @@ async function startServer() {
     try {
       const userId = (req as any).userId;
       const st = await agentCore.getAgentSettings();
-      const { data: me } = await supabase.from("users").select("id, agent_enabled, is_banned").eq("id", userId).maybeSingle();
+      const { data: me } = await supabase.from("users").select("id, agent_enabled, is_banned, agent_commission_percent").eq("id", userId).maybeSingle();
       if (!me) return res.status(404).json({ error: "المستخدم غير موجود" });
       if (!agentCore.isAgentWith(st, me)) return res.json({ system_enabled: st.enabled, is_agent: false });
       const code = await agentCore.ensureAgentCode(userId);
       const info = await agentCore.getAgentClients(userId);
-      res.json({ system_enabled: true, is_agent: true, code, percent: st.percent, ...info });
+      res.json({ system_enabled: true, is_agent: true, code, percent: agentCore.effectivePercent(st, me), ...info });
     } catch (e: any) { safeError(res, e, "فشل تحميل حساب الوكيل"); }
   });
 
